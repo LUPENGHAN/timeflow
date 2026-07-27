@@ -15,6 +15,7 @@ import {
   listPendingWriteRequests,
   listPlaces,
   rejectWriteRequest,
+  updateWriteRequest,
   type Item,
   type Place,
   type Reminder,
@@ -67,6 +68,7 @@ export function HomeScreen() {
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('到家后提醒我取快递');
   const [voiceResult, setVoiceResult] = useState<VoiceCommandResult | null>(null);
+  const [selectedVoiceCandidateId, setSelectedVoiceCandidateId] = useState<string | null>(null);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [editItem, setEditItem] = useState<Item | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft>(emptyEditDraft());
@@ -451,6 +453,7 @@ export function HomeScreen() {
 
     setVoiceBusy(true);
     setVoiceResult(null);
+    setSelectedVoiceCandidateId(null);
     try {
       const result = await createVoiceCommand(voiceTranscript.trim());
       setVoiceResult(result);
@@ -468,12 +471,18 @@ export function HomeScreen() {
       return;
     }
 
+    if (voiceResult.candidates.length > 1 && !selectedVoiceCandidateId) {
+      setBanner('请先选择一个候选事项');
+      return;
+    }
+
     setVoiceBusy(true);
     try {
       await confirmWriteRequest(writeRequestId);
       await refresh();
       setVoiceOpen(false);
       setVoiceResult(null);
+      setSelectedVoiceCandidateId(null);
       setBanner('语音事项已确认写入');
     } catch {
       setBanner('确认失败');
@@ -493,9 +502,43 @@ export function HomeScreen() {
       await rejectWriteRequest(writeRequestId);
       await refresh();
       setVoiceResult(null);
+      setSelectedVoiceCandidateId(null);
       setBanner('已取消语音候选');
     } catch {
       setBanner('取消失败');
+    } finally {
+      setVoiceBusy(false);
+    }
+  }
+
+  async function handleChooseVoiceCandidate(candidate: Item) {
+    if (!voiceResult?.write_request || voiceBusy) {
+      return;
+    }
+
+    setVoiceBusy(true);
+    setBanner(null);
+    try {
+      const narrowedPayload = narrowCandidatePayload(
+        voiceResult.write_request.candidate_payload,
+        candidate,
+      );
+      const response = await updateWriteRequest(voiceResult.write_request.id, {
+        candidate_payload: narrowedPayload,
+      });
+      setVoiceResult((current) =>
+        current
+          ? {
+              ...current,
+              write_request: response.write_request,
+            }
+          : current,
+      );
+      setSelectedVoiceCandidateId(candidate.id);
+      await refresh();
+      setBanner('已选择候选事项');
+    } catch {
+      setBanner('选择候选失败');
     } finally {
       setVoiceBusy(false);
     }
@@ -720,7 +763,9 @@ export function HomeScreen() {
         onConfirm={handleConfirmVoice}
         onParse={handleParseVoice}
         onReject={handleRejectVoice}
+        onChooseCandidate={handleChooseVoiceCandidate}
         result={voiceResult}
+        selectedCandidateId={selectedVoiceCandidateId}
         transcript={voiceTranscript}
         visible={voiceOpen}
         onTranscriptChange={setVoiceTranscript}
@@ -932,8 +977,10 @@ function VoiceSheet({
   onConfirm,
   onParse,
   onReject,
+  onChooseCandidate,
   onTranscriptChange,
   result,
+  selectedCandidateId,
   transcript,
   visible,
 }: {
@@ -942,12 +989,16 @@ function VoiceSheet({
   onConfirm: () => void;
   onParse: () => void;
   onReject: () => void;
+  onChooseCandidate: (candidate: Item) => void;
   onTranscriptChange: (value: string) => void;
   result: VoiceCommandResult | null;
+  selectedCandidateId: string | null;
   transcript: string;
   visible: boolean;
 }) {
   const preview = result?.write_request?.candidate_payload;
+  const needsSelection = Boolean(result?.write_request && result.candidates.length > 1);
+  const canConfirm = Boolean(preview) && (!needsSelection || selectedCandidateId !== null) && !busy;
   return (
     <Modal animationType="slide" visible={visible}>
       <View style={styles.modalRoot}>
@@ -984,6 +1035,35 @@ function VoiceSheet({
             <View style={styles.notice}>
               <Text style={styles.noticeTitle}>需要补充</Text>
               <Text style={styles.noticeText}>{result.clarification}</Text>
+            </View>
+          ) : null}
+
+          {needsSelection ? (
+            <View style={styles.preview}>
+              <Text style={styles.sectionTitle}>选择候选</Text>
+              <View style={styles.candidateList}>
+                {result?.candidates.map((item) => {
+                  const selected = selectedCandidateId === item.id;
+                  return (
+                    <Pressable
+                      key={item.id}
+                      onPress={() => onChooseCandidate(item)}
+                      style={[styles.candidateRow, selected && styles.candidateRowActive]}
+                    >
+                      <View style={styles.placeBody}>
+                        <View style={styles.itemHeader}>
+                          <Text style={styles.itemTitle}>{item.title}</Text>
+                          <Text style={styles.itemKind}>
+                            {item.type === 'todo' ? '待办' : '日历'}
+                          </Text>
+                        </View>
+                        <Text style={styles.itemMeta}>{itemSummary(item)}</Text>
+                      </View>
+                      <Text style={styles.secondaryButtonText}>{selected ? '已选' : '选择'}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
             </View>
           ) : null}
 
@@ -1030,9 +1110,12 @@ function VoiceSheet({
                 </Pressable>
                 <Pressable
                   onPress={onConfirm}
-                  style={[styles.primaryButton, busy && styles.disabledButton]}
+                  style={[styles.primaryButton, (!canConfirm || busy) && styles.disabledButton]}
+                  disabled={!canConfirm}
                 >
-                  <Text style={styles.primaryButtonText}>确认写入</Text>
+                  <Text style={styles.primaryButtonText}>
+                    {needsSelection && selectedCandidateId === null ? '先选候选' : '确认写入'}
+                  </Text>
                 </Pressable>
               </View>
             </View>
@@ -1523,6 +1606,42 @@ function reminderActionSuccessLabel(action: ReminderAction) {
   return '提醒已确认';
 }
 
+function narrowCandidatePayload(payload: Record<string, unknown>, candidate: Item) {
+  const operations = Array.isArray(payload.operations) ? payload.operations : [];
+  const selectedOperation = operations.find(
+    (operation) =>
+      operation &&
+      typeof operation === 'object' &&
+      'target_id' in operation &&
+      (operation as { target_id?: unknown }).target_id === candidate.id,
+  );
+  if (!selectedOperation || typeof selectedOperation !== 'object') {
+    throw new Error('candidate not found');
+  }
+
+  return {
+    ...payload,
+    candidates: [itemToCandidatePreview(candidate)],
+    operations: [selectedOperation],
+    target_id: candidate.id,
+  };
+}
+
+function itemToCandidatePreview(item: Item) {
+  return {
+    description: item.description,
+    due_at: item.due_at,
+    end_at: item.end_at,
+    id: item.id,
+    place_text: item.place_text,
+    start_at: item.start_at,
+    status: item.status,
+    title: item.title,
+    type: item.type,
+    version: item.version,
+  };
+}
+
 function toInputDateTime(value: string | null) {
   return value ? value.slice(0, 16) : '';
 }
@@ -1571,6 +1690,24 @@ const styles = StyleSheet.create({
   completedText: {
     color: colors.muted,
     textDecorationLine: 'line-through',
+  },
+  candidateList: {
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  candidateRow: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  candidateRowActive: {
+    borderColor: colors.accent,
+    borderWidth: 2,
   },
   content: {
     gap: spacing.lg,

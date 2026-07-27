@@ -147,11 +147,50 @@ class TimeflowApplication:
                 )
 
             if len(candidates) > 1:
+                voice_command.status = VoiceCommandStatus.NEEDS_CLARIFICATION
+                voice_command.updated_at = datetime.now(UTC)
+                self.store.update_voice_command(voice_command)
+                events.append(
+                    self._event(
+                        DomainEventType.COMMAND_STATUS_CHANGED,
+                        "voice_command",
+                        voice_command.id,
+                        {
+                            "status": voice_command.status.value,
+                            "command_id": command.id,
+                        },
+                    )
+                )
+                candidate_payload = self._candidate_payload(command, candidates)
+                write_request = WriteRequest(
+                    id=str(uuid4()),
+                    identity=identity,
+                    source_command_id=command.id,
+                    command=command,
+                    candidate_payload=candidate_payload,
+                    payload_hash=self._payload_hash(candidate_payload),
+                    expires_at=now + timedelta(minutes=10),
+                    idempotency_key=f"{identity.user_id}:{command.id}",
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.store.add_write_request(write_request)
+                events.append(
+                    self._event(
+                        DomainEventType.WRITE_REQUEST_CREATED,
+                        "write_request",
+                        write_request.id,
+                        {
+                            "status": write_request.status.value,
+                            "candidate_payload": write_request.candidate_payload,
+                        },
+                    )
+                )
                 self.store.add_events(events)
                 return VoiceCommandResult(
                     voice_command,
                     command,
-                    None,
+                    write_request,
                     events,
                     clarification="找到多个候选事项，请先选择要修改的对象。",
                     candidates=candidates,
@@ -935,6 +974,11 @@ class TimeflowApplication:
                     "changes": write_request.candidate_payload.get("item", {}),
                 }
             ]
+        elif len(operations) > 1:
+            raise ApplicationError(
+                ErrorCode.CLARIFICATION_REQUIRED,
+                "Please choose one candidate item before confirming the write request.",
+            )
 
         events: list[DomainEvent] = []
         for operation in operations:

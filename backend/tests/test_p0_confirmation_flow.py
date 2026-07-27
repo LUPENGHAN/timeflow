@@ -102,6 +102,77 @@ def test_voice_query_returns_matching_agenda_without_write_request() -> None:
     app.dependency_overrides.clear()
 
 
+def test_voice_update_requires_candidate_selection_before_confirm() -> None:
+    """Ambiguous voice updates should create a pending write request that needs selection."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        first = client.post(
+            "/api/v1/items",
+            json={
+                "type": "calendar_event",
+                "title": "会议A",
+                "start_at": (datetime.now(UTC) + timedelta(days=1, hours=1)).isoformat(),
+            },
+        )
+        assert first.status_code == 200
+        second = client.post(
+            "/api/v1/items",
+            json={
+                "type": "calendar_event",
+                "title": "会议B",
+                "start_at": (datetime.now(UTC) + timedelta(days=1, hours=2)).isoformat(),
+            },
+        )
+        assert second.status_code == 200
+
+        voice_response = client.post(
+            "/api/v1/voice/commands",
+            json={"transcript": "把明天的会议改到四点"},
+        )
+
+        assert voice_response.status_code == 200
+        body = voice_response.json()
+        assert body["clarification"] == "找到多个候选事项，请先选择要修改的对象。"
+        assert body["write_request"]["status"] == "pending"
+        write_request_id = body["write_request"]["id"]
+        assert len(body["candidates"]) == 2
+
+        blocked = client.post(f"/api/v1/write-requests/{write_request_id}/confirm")
+        assert blocked.status_code == 400
+        assert blocked.json()["detail"]["code"] == "clarification_required"
+
+        selected_candidate = body["candidates"][0]
+        selected_operation = next(
+            op
+            for op in body["write_request"]["candidate_payload"]["operations"]
+            if op["target_id"] == selected_candidate["id"]
+        )
+        narrowed_payload = {
+            **body["write_request"]["candidate_payload"],
+            "candidates": [selected_candidate],
+            "operations": [selected_operation],
+            "target_id": selected_candidate["id"],
+        }
+        update_response = client.patch(
+            f"/api/v1/write-requests/{write_request_id}",
+            json={"candidate_payload": narrowed_payload},
+        )
+        assert update_response.status_code == 200
+
+        confirmed = client.post(f"/api/v1/write-requests/{write_request_id}/confirm")
+        assert confirmed.status_code == 200
+
+        items = client.get("/api/v1/items").json()
+        updated_item = next(item for item in items if item["id"] == selected_candidate["id"])
+        assert updated_item["title"] == "会议"
+        assert "T16:00:00" in updated_item["start_at"]
+
+    app.dependency_overrides.clear()
+
+
 def test_events_endpoint_returns_cursor_sync_events() -> None:
     """HTTP sync should expose domain events with a cursor."""
 
