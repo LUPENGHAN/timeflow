@@ -8,6 +8,7 @@ class ErrorCode(StrEnum):
 
     UNKNOWN_ACTION = "unknown_action"
     UNKNOWN_ENTITY = "unknown_entity"
+    PERMISSION_DENIED = "permission_denied"
     MISSING_REQUIRED_FIELD = "missing_required_field"
     WRITE_REQUEST_NOT_FOUND = "write_request_not_found"
     WRITE_REQUEST_NOT_PENDING = "write_request_not_pending"

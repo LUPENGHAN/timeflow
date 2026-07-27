@@ -136,4 +136,5 @@ class DomainEventType(StrEnum):
     REMINDER_FAILED = "reminder.failed"
     NOTIFICATION_REGISTRATION_FAILED = "notification.registration.failed"
     NOTIFICATION_FALLBACK_REQUESTED = "notification.fallback.requested"
+    PERMISSION_DEGRADED = "permission.degraded"
     SYNC_RESPONSE = "sync.response"

@@ -326,3 +326,19 @@ class RepeatRuleCreateResponse(BaseModel):
     """Created repeat rule response."""
 
     repeat_rule: RepeatRuleResponse
+
+
+class PermissionDegradeRequest(BaseModel):
+    """Request a permission degradation path."""
+
+    permission: str
+    reason: str
+    title: str = Field(min_length=1)
+    place_text: str | None = None
+
+
+class PermissionDegradeResponse(BaseModel):
+    """Permission degradation response."""
+
+    item: ItemResponse
+    events: list[EventResponse]

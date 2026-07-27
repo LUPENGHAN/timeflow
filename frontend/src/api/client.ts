@@ -232,4 +232,17 @@ export function createItem(input: {
   });
 }
 
+export function degradePermission(input: {
+  permission: 'microphone' | 'notification' | 'location';
+  reason: string;
+  title: string;
+  place_text?: string | null;
+}) {
+  return apiFetch<{ item: Item; events: EventMessage[] }>('/permissions/degrade', {
+    body: JSON.stringify(input),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+  });
+}
+
 export { API_BASE_URL };

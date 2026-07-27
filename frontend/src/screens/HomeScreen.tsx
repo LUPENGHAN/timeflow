@@ -10,6 +10,7 @@ import {
   createRepeatRule,
   createWriteRequest,
   createVoiceCommand,
+  degradePermission,
   getHealth,
   listItems,
   listPlaces,
@@ -25,6 +26,7 @@ import { colors, spacing } from '../constants/theme';
 
 type ViewMode = 'today' | 'week' | 'month';
 type ItemType = 'calendar_event' | 'todo';
+type PermissionState = 'granted' | 'denied';
 
 export function HomeScreen() {
   const [healthState, setHealthState] = useState<'checking' | 'ok' | 'failed'>('checking');
@@ -53,6 +55,15 @@ export function HomeScreen() {
   const [placeSubmitting, setPlaceSubmitting] = useState(false);
   const [repeatPattern, setRepeatPattern] = useState('');
   const [repeatRuleSubmitting, setRepeatRuleSubmitting] = useState(false);
+  const [permissions, setPermissions] = useState<{
+    location: PermissionState;
+    microphone: PermissionState;
+    notification: PermissionState;
+  }>({
+    location: 'granted',
+    microphone: 'granted',
+    notification: 'granted',
+  });
 
   useEffect(() => {
     let active = true;
@@ -197,6 +208,21 @@ export function HomeScreen() {
       setBanner('Repeat rule save failed');
     } finally {
       setRepeatRuleSubmitting(false);
+    }
+  }
+
+  async function handleLocationDegrade() {
+    try {
+      const result = await degradePermission({
+        permission: 'location',
+        place_text: '家',
+        reason: 'location permission denied',
+        title: '取快递',
+      });
+      setItems((current) => [result.item, ...current]);
+      setBanner('Location degraded to todo with text place');
+    } catch {
+      setBanner('Permission degrade failed');
     }
   }
 
@@ -552,6 +578,44 @@ export function HomeScreen() {
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Permissions</Text>
+            <Text style={styles.count}>P0</Text>
+          </View>
+          <View style={styles.form}>
+            {(['microphone', 'notification', 'location'] as const).map((permission) => (
+              <View key={permission} style={styles.permissionRow}>
+                <Text style={styles.itemTitle}>{permission}</Text>
+                <View style={styles.inlineActions}>
+                  {(['granted', 'denied'] as const).map((state) => (
+                    <Pressable
+                      key={state}
+                      onPress={() =>
+                        setPermissions((current) => ({
+                          ...current,
+                          [permission]: state,
+                        }))
+                      }
+                      style={[
+                        styles.inlineActionButton,
+                        permissions[permission] === state && styles.inlineActionActive,
+                      ]}
+                    >
+                      <Text style={styles.inlineActionText}>{state}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ))}
+            {permissions.location === 'denied' ? (
+              <Pressable onPress={handleLocationDegrade} style={styles.primaryButton}>
+                <Text style={styles.primaryButtonText}>Degrade location reminder</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Timeline</Text>
             <Text style={styles.count}>{timelineItems.length}</Text>
           </View>
@@ -878,6 +942,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.sm,
     paddingVertical: 6,
   },
+  inlineActionActive: {
+    borderColor: colors.accent,
+  },
   inlineActionText: {
     color: colors.text,
     fontSize: 12,
@@ -896,6 +963,12 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 16,
     fontWeight: '600',
+  },
+  permissionRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: spacing.md,
   },
   modalContent: {
     gap: spacing.md,

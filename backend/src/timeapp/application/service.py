@@ -329,6 +329,42 @@ class TimeflowApplication:
         self.store.add_repeat_rule(repeat_rule)
         return repeat_rule
 
+    def degrade_permission(
+        self,
+        identity: Identity,
+        permission: str,
+        reason: str,
+        title: str,
+        place_text: str | None = None,
+    ) -> tuple[Item, list[DomainEvent]]:
+        """Apply a P0 permission degradation path."""
+
+        if permission != "location":
+            raise ApplicationError(
+                ErrorCode.PERMISSION_DENIED,
+                f"{permission} permission is denied.",
+            )
+        item, item_events = self.create_item(
+            identity=identity,
+            item_type=ItemType.TODO,
+            title=title,
+            place_text=place_text,
+        )
+        degraded_event = self._event(
+            DomainEventType.PERMISSION_DEGRADED,
+            "permission",
+            permission,
+            {
+                "permission": permission,
+                "reason": reason,
+                "degraded_to": "todo_with_text_place",
+                "item_id": item.id,
+                "place_text": place_text,
+            },
+        )
+        self.store.add_events([degraded_event])
+        return item, [*item_events, degraded_event]
+
     def create_write_request(
         self,
         identity: Identity,
