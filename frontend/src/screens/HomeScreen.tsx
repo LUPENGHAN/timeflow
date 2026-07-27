@@ -54,6 +54,8 @@ type ViewMode = 'today' | 'week' | 'month';
 type ItemType = 'todo' | 'calendar_event';
 type ConnectionState = 'checking' | 'online' | 'offline';
 type SocketState = 'connecting' | 'connected' | 'closed';
+type DevicePermission = 'microphone' | 'notification' | 'location';
+type DevicePermissionState = 'checking' | 'granted' | 'denied' | 'undetermined' | 'unavailable';
 type ManualOperation =
   | 'create_todo'
   | 'create_calendar_event'
@@ -101,6 +103,14 @@ export function HomeScreen() {
   const [description, setDescription] = useState('');
   const [itemType, setItemType] = useState<ItemType>('todo');
   const [banner, setBanner] = useState<string | null>(null);
+  const [devicePermissions, setDevicePermissions] = useState<
+    Record<DevicePermission, DevicePermissionState>
+  >({
+    location: 'checking',
+    microphone: 'checking',
+    notification: 'checking',
+  });
+  const [permissionBusy, setPermissionBusy] = useState<DevicePermission | null>(null);
   const [loading, setLoading] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('到家后提醒我取快递');
@@ -151,6 +161,10 @@ export function HomeScreen() {
     setRepeatRules(repeatResponse);
     setOutboxMessages(outboxResponse);
     setReminders(reminderResponse);
+  }, []);
+
+  const refreshDevicePermissions = useCallback(async () => {
+    setDevicePermissions(await loadDevicePermissions());
   }, []);
 
   useEffect(() => {
@@ -213,6 +227,30 @@ export function HomeScreen() {
       socket.close();
     };
   }, [refresh]);
+
+  useEffect(() => {
+    let active = true;
+
+    loadDevicePermissions()
+      .then((nextPermissions) => {
+        if (active) {
+          setDevicePermissions(nextPermissions);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setDevicePermissions({
+            location: 'unavailable',
+            microphone: 'unavailable',
+            notification: 'unavailable',
+          });
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const calendarItems = useMemo(
     () => items.filter((item) => item.type === 'calendar_event'),
@@ -298,6 +336,30 @@ export function HomeScreen() {
       setBanner('创建确认请求失败');
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleRequestDevicePermission(permission: DevicePermission) {
+    if (permissionBusy) {
+      return;
+    }
+
+    setPermissionBusy(permission);
+    setBanner(null);
+    try {
+      if (permission === 'microphone') {
+        await requestRecordingPermissionsAsync();
+      } else if (permission === 'notification') {
+        await Notifications.requestPermissionsAsync();
+      } else {
+        await Location.requestForegroundPermissionsAsync();
+      }
+      await refreshDevicePermissions();
+      setBanner(`${devicePermissionLabel(permission)}权限已更新`);
+    } catch {
+      setBanner(`${devicePermissionLabel(permission)}权限请求失败`);
+    } finally {
+      setPermissionBusy(null);
     }
   }
 
@@ -807,6 +869,12 @@ export function HomeScreen() {
 
         {banner ? <Text style={styles.banner}>{banner}</Text> : null}
 
+        <PermissionPanel
+          busy={permissionBusy}
+          onRequest={handleRequestDevicePermission}
+          permissions={devicePermissions}
+        />
+
         <View style={styles.toolbar}>
           {(['today', 'week', 'month'] as const).map((mode) => (
             <Pressable
@@ -1206,6 +1274,42 @@ function Metric({ label, value }: { label: string; value: number }) {
     <View style={styles.metric}>
       <Text style={styles.metricValue}>{value}</Text>
       <Text style={styles.metricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function PermissionPanel({
+  busy,
+  onRequest,
+  permissions,
+}: {
+  busy: DevicePermission | null;
+  onRequest: (permission: DevicePermission) => void;
+  permissions: Record<DevicePermission, DevicePermissionState>;
+}) {
+  return (
+    <View style={styles.permissionSection}>
+      {(['microphone', 'notification', 'location'] as const).map((permission) => {
+        const granted = permissions[permission] === 'granted';
+        return (
+          <View key={permission} style={styles.permissionRow}>
+            <View style={styles.placeBody}>
+              <Text style={styles.itemTitle}>{devicePermissionLabel(permission)}</Text>
+              <Text style={styles.placeMeta}>
+                {devicePermissionStateLabel(permissions[permission])}
+              </Text>
+            </View>
+            <Pressable
+              onPress={() => onRequest(permission)}
+              style={[styles.smallButton, busy === permission && styles.disabledButton]}
+            >
+              <Text style={styles.smallButtonText}>
+                {busy === permission ? '请求中' : granted ? '刷新' : '开启'}
+              </Text>
+            </Pressable>
+          </View>
+        );
+      })}
     </View>
   );
 }
@@ -2157,6 +2261,64 @@ function reminderActionSuccessLabel(action: ReminderAction) {
   return '提醒已确认';
 }
 
+async function loadDevicePermissions(): Promise<Record<DevicePermission, DevicePermissionState>> {
+  const [microphone, notification, location] = await Promise.allSettled([
+    getRecordingPermissionsAsync(),
+    Notifications.getPermissionsAsync(),
+    Location.getForegroundPermissionsAsync(),
+  ]);
+
+  return {
+    location: permissionStateFromResult(location),
+    microphone: permissionStateFromResult(microphone),
+    notification: permissionStateFromResult(notification),
+  };
+}
+
+function permissionStateFromResult(
+  result: PromiseSettledResult<{ granted: boolean; status?: string }>,
+): DevicePermissionState {
+  if (result.status === 'rejected') {
+    return 'unavailable';
+  }
+  if (result.value.granted) {
+    return 'granted';
+  }
+  if (result.value.status === 'denied') {
+    return 'denied';
+  }
+  if (result.value.status === 'undetermined') {
+    return 'undetermined';
+  }
+  return 'unavailable';
+}
+
+function devicePermissionLabel(permission: DevicePermission) {
+  if (permission === 'microphone') {
+    return '麦克风';
+  }
+  if (permission === 'notification') {
+    return '通知';
+  }
+  return '定位';
+}
+
+function devicePermissionStateLabel(state: DevicePermissionState) {
+  if (state === 'granted') {
+    return '已允许';
+  }
+  if (state === 'denied') {
+    return '已拒绝';
+  }
+  if (state === 'undetermined') {
+    return '未设置';
+  }
+  if (state === 'checking') {
+    return '检查中';
+  }
+  return '不可用';
+}
+
 function narrowCandidatePayload(payload: Record<string, unknown>, candidate: Item) {
   const operations = Array.isArray(payload.operations) ? payload.operations : [];
   const selectedOperation = operations.find(
@@ -2471,6 +2633,19 @@ const styles = StyleSheet.create({
     padding: spacing.md,
   },
   pendingSection: {
+    gap: spacing.sm,
+  },
+  permissionRow: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  permissionSection: {
     gap: spacing.sm,
   },
   placeBody: {
