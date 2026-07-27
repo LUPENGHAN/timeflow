@@ -128,6 +128,23 @@ class InMemoryStore:
         with self._lock:
             self.places[place.id] = place
 
+    def get_place(self, place_id: str) -> Place | None:
+        """Load a place by id."""
+
+        with self._lock:
+            return self.places.get(place_id)
+
+    def update_place(self, place: Place) -> None:
+        """Persist an updated place."""
+
+        self.add_place(place)
+
+    def delete_place(self, place_id: str) -> None:
+        """Delete a place by id."""
+
+        with self._lock:
+            self.places.pop(place_id, None)
+
     def list_places(self, user_id: str) -> list[Place]:
         """Return all visible places for a user."""
 
@@ -377,6 +394,37 @@ class SqlAlchemyStore:
             )
         )
         self.session.commit()
+
+    def get_place(self, place_id: str) -> Place | None:
+        """Load a place by id."""
+
+        record = self.session.get(PlaceRecord, place_id)
+        return self._place_from_record(record) if record is not None else None
+
+    def update_place(self, place: Place) -> None:
+        """Persist an updated place."""
+
+        record = self.session.get(PlaceRecord, place.id)
+        if record is None:
+            self.add_place(place)
+            return
+        record.label = place.label
+        record.place_type = place.place_type
+        record.latitude = place.latitude
+        record.longitude = place.longitude
+        record.accuracy_meters = place.accuracy_meters
+        record.radius_meters = place.radius_meters
+        record.description = place.description
+        record.updated_at = place.updated_at
+        self.session.commit()
+
+    def delete_place(self, place_id: str) -> None:
+        """Delete a place by id."""
+
+        record = self.session.get(PlaceRecord, place_id)
+        if record is not None:
+            self.session.delete(record)
+            self.session.commit()
 
     def list_places(self, user_id: str) -> list[Place]:
         """Return all visible places for a user."""

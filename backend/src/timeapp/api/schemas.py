@@ -363,6 +363,24 @@ class PlaceCreateResponse(BaseModel):
     place: PlaceResponse
 
 
+class PlaceUpdateRequest(BaseModel):
+    """Update editable place fields."""
+
+    label: str | None = None
+    place_type: str | None = None
+    radius_meters: int | None = None
+    description: str | None = None
+    latitude: str | None = None
+    longitude: str | None = None
+    accuracy_meters: int | None = None
+
+
+class PlaceMutationResponse(BaseModel):
+    """Updated or deleted place response."""
+
+    place: PlaceResponse
+
+
 class RepeatRuleResponse(BaseModel):
     """Skeleton repeat rule response."""
 

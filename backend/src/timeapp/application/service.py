@@ -338,6 +338,56 @@ class TimeflowApplication:
         self.store.add_place(place)
         return place
 
+    def update_place(
+        self,
+        identity: Identity,
+        place_id: str,
+        label: str | None = None,
+        place_type: str | None = None,
+        radius_meters: int | None = None,
+        description: str | None = None,
+        latitude: str | None = None,
+        longitude: str | None = None,
+        accuracy_meters: int | None = None,
+    ) -> Place:
+        """Update an existing place owned by the current user."""
+
+        place = self.store.get_place(place_id)
+        if place is None or place.user_id != identity.user_id:
+            raise ApplicationError(
+                ErrorCode.PLACE_NOT_FOUND,
+                f"Place {place_id} was not found.",
+            )
+        if label is not None:
+            place.label = label
+        if place_type is not None:
+            place.place_type = place_type
+        if radius_meters is not None:
+            place.radius_meters = radius_meters
+        if description is not None:
+            place.description = description
+        if latitude is not None:
+            place.latitude = latitude
+        if longitude is not None:
+            place.longitude = longitude
+        if accuracy_meters is not None:
+            place.accuracy_meters = accuracy_meters
+        place.updated_at = datetime.now(UTC)
+        self.store.update_place(place)
+        return place
+
+    def delete_place(self, identity: Identity, place_id: str) -> Place:
+        """Delete an existing place owned by the current user."""
+
+        place = self.store.get_place(place_id)
+        if place is None or place.user_id != identity.user_id:
+            raise ApplicationError(
+                ErrorCode.PLACE_NOT_FOUND,
+                f"Place {place_id} was not found.",
+            )
+        self.store.delete_place(place.id)
+        return place
+
     def create_repeat_rule(
         self,
         identity: Identity,
