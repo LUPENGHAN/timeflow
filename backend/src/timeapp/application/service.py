@@ -181,7 +181,35 @@ class TimeflowApplication:
     def list_pending_write_requests(self, identity: Identity) -> list[WriteRequest]:
         """List pending writes that still require user confirmation."""
 
-        return self.store.list_pending_write_requests(identity.user_id)
+        pending_requests = self.store.list_pending_write_requests(identity.user_id)
+        active_requests: list[WriteRequest] = []
+        now = datetime.now(UTC)
+        for write_request in pending_requests:
+            if write_request.expires_at <= now:
+                write_request.status = WriteRequestStatus.EXPIRED
+                write_request.updated_at = now
+                self.store.update_write_request(write_request)
+                continue
+            active_requests.append(write_request)
+        return active_requests
+
+    def get_write_request(self, write_request_id: str, identity: Identity) -> WriteRequest:
+        """Return one write request owned by the current user."""
+
+        write_request = self.store.get_write_request(write_request_id)
+        if write_request is None or write_request.identity.user_id != identity.user_id:
+            raise ApplicationError(
+                ErrorCode.WRITE_REQUEST_NOT_FOUND,
+                f"Write request {write_request_id} was not found.",
+            )
+        if (
+            write_request.status == WriteRequestStatus.PENDING
+            and write_request.expires_at <= datetime.now(UTC)
+        ):
+            write_request.status = WriteRequestStatus.EXPIRED
+            write_request.updated_at = datetime.now(UTC)
+            self.store.update_write_request(write_request)
+        return write_request
 
     def confirm_write_request(
         self, write_request_id: str, identity: Identity
@@ -707,6 +735,14 @@ class TimeflowApplication:
             raise ApplicationError(
                 ErrorCode.WRITE_REQUEST_NOT_PENDING,
                 f"Write request {write_request_id} is not pending.",
+            )
+        if write_request.expires_at <= datetime.now(UTC):
+            write_request.status = WriteRequestStatus.EXPIRED
+            write_request.updated_at = datetime.now(UTC)
+            self.store.update_write_request(write_request)
+            raise ApplicationError(
+                ErrorCode.WRITE_REQUEST_EXPIRED,
+                f"Write request {write_request_id} has expired.",
             )
         return write_request
 

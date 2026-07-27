@@ -1,5 +1,7 @@
 """Tests for the MS1 voice-command confirmation flow."""
 
+from datetime import UTC, datetime, timedelta
+
 from fastapi.testclient import TestClient
 
 from timeapp.api.dependencies import get_timeflow_app
@@ -65,4 +67,33 @@ def test_events_endpoint_returns_cursor_sync_events() -> None:
             "command.status.changed",
             "write_request.created",
         ]
+    app.dependency_overrides.clear()
+
+
+def test_write_request_detail_and_expiration_gate() -> None:
+    """Expired pending writes can be inspected but cannot be confirmed."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        response = client.post("/api/v1/voice/commands", json={"transcript": "记得买牛奶"})
+        assert response.status_code == 200
+        write_request_id = response.json()["write_request"]["id"]
+
+        detail_response = client.get(f"/api/v1/write-requests/{write_request_id}")
+        assert detail_response.status_code == 200
+        assert detail_response.json()["status"] == "pending"
+
+        write_request = test_app.store.write_requests[write_request_id]
+        write_request.expires_at = datetime.now(UTC) - timedelta(minutes=1)
+
+        confirm_response = client.post(f"/api/v1/write-requests/{write_request_id}/confirm")
+        assert confirm_response.status_code == 409
+        assert confirm_response.json()["detail"]["code"] == "write_request_expired"
+
+        pending_response = client.get("/api/v1/write-requests/pending")
+        assert pending_response.status_code == 200
+        assert pending_response.json() == []
+
     app.dependency_overrides.clear()

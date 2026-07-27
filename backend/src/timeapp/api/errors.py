@@ -20,6 +20,8 @@ def http_error(error: ApplicationError) -> HTTPException:
         status_code = status.HTTP_404_NOT_FOUND
     if error.code == ErrorCode.WRITE_REQUEST_NOT_PENDING:
         status_code = status.HTTP_409_CONFLICT
+    if error.code == ErrorCode.WRITE_REQUEST_EXPIRED:
+        status_code = status.HTTP_409_CONFLICT
     return HTTPException(
         status_code=status_code,
         detail={"code": error.code, "message": error.message},

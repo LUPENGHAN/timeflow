@@ -12,6 +12,7 @@ class ErrorCode(StrEnum):
     MISSING_REQUIRED_FIELD = "missing_required_field"
     WRITE_REQUEST_NOT_FOUND = "write_request_not_found"
     WRITE_REQUEST_NOT_PENDING = "write_request_not_pending"
+    WRITE_REQUEST_EXPIRED = "write_request_expired"
     ITEM_NOT_FOUND = "item_not_found"
     REMINDER_NOT_FOUND = "reminder_not_found"
     PLACE_NOT_FOUND = "place_not_found"

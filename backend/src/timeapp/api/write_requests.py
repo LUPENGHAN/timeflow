@@ -78,6 +78,22 @@ async def list_pending_write_requests(
     ]
 
 
+@router.get("/{write_request_id}", response_model=WriteRequestResponse)
+async def get_write_request(
+    write_request_id: str,
+    identity: IdentityDependency,
+    app: AppDependency,
+) -> WriteRequestResponse:
+    """Return one write request for inspection."""
+
+    try:
+        write_request = app.get_write_request(write_request_id, identity)
+    except ApplicationError as error:
+        raise http_error(error) from error
+
+    return WriteRequestResponse.from_domain(write_request)
+
+
 @router.post("/{write_request_id}/confirm", response_model=ConfirmationResponse)
 async def confirm_write_request(
     write_request_id: str,
