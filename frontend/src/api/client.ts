@@ -65,6 +65,14 @@ export type Item = {
   }[];
 };
 
+export type HealthResponse = {
+  status: 'ok';
+};
+
+export function getHealth() {
+  return apiFetch<HealthResponse>('/health');
+}
+
 export function createVoiceCommand(transcript: string) {
   return apiFetch<VoiceCommandResult>('/voice/commands', {
     body: JSON.stringify({ transcript }),

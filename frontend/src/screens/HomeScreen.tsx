@@ -1,6 +1,8 @@
 import { StatusBar } from 'expo-status-bar';
+import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 
+import { getHealth } from '../api/client';
 import { colors, spacing } from '../constants/theme';
 
 const todayItems = [
@@ -14,6 +16,28 @@ const todos = [
 ] as const;
 
 export function HomeScreen() {
+  const [healthState, setHealthState] = useState<'checking' | 'ok' | 'failed'>('checking');
+
+  useEffect(() => {
+    let active = true;
+
+    getHealth()
+      .then(() => {
+        if (active) {
+          setHealthState('ok');
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setHealthState('failed');
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
   return (
     <View style={styles.root}>
       <StatusBar style="auto" />
@@ -24,9 +48,18 @@ export function HomeScreen() {
             <Text style={styles.title}>Timeflow</Text>
           </View>
           <Pressable style={styles.syncButton}>
-            <Text style={styles.syncButtonText}>Sync</Text>
+            <Text style={styles.syncButtonText}>
+              {healthState === 'ok' ? 'Connected' : healthState === 'failed' ? 'Offline' : 'Checking'}
+            </Text>
           </Pressable>
         </View>
+        <Text style={styles.connectionStatus}>
+          {healthState === 'ok'
+            ? 'Backend health check passed'
+            : healthState === 'failed'
+              ? 'Backend health check failed'
+              : 'Checking backend health'}
+        </Text>
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
@@ -123,6 +156,11 @@ const styles = StyleSheet.create({
   count: {
     color: colors.muted,
     fontSize: 14,
+  },
+  connectionStatus: {
+    color: colors.muted,
+    fontSize: 13,
+    marginTop: -spacing.sm,
   },
   eyebrow: {
     color: colors.muted,
