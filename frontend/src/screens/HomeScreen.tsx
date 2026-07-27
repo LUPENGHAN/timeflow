@@ -339,6 +339,13 @@ export function HomeScreen() {
                 <View style={styles.rowBody}>
                   <Text style={styles.itemTitle}>{item.title}</Text>
                   <Text style={styles.itemMeta}>{item.description ?? 'Calendar'}</Text>
+                  <View style={styles.badgeRow}>
+                    {item.reminders.map((reminder) => (
+                      <View key={reminder.id} style={styles.badge}>
+                        <Text style={styles.badgeText}>{reminder.trigger_type}</Text>
+                      </View>
+                    ))}
+                  </View>
                 </View>
                 <View style={styles.inlineActions}>
                   <Pressable
@@ -367,6 +374,13 @@ export function HomeScreen() {
                 <View style={styles.rowBody}>
                   <Text style={styles.itemTitle}>{todo.title}</Text>
                   <Text style={styles.itemMeta}>{todo.description ?? 'Normal'}</Text>
+                  <View style={styles.badgeRow}>
+                    {todo.reminders.map((reminder) => (
+                      <View key={reminder.id} style={styles.badge}>
+                        <Text style={styles.badgeText}>{reminder.trigger_type}</Text>
+                      </View>
+                    ))}
+                  </View>
                 </View>
                 <View style={styles.inlineActions}>
                   <Pressable
@@ -529,6 +543,24 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     marginTop: -spacing.sm,
+  },
+  badge: {
+    backgroundColor: colors.background,
+    borderRadius: 999,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.xs,
+  },
+  badgeText: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'capitalize',
   },
   checkbox: {
     borderColor: colors.border,
