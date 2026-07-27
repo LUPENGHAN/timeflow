@@ -12,6 +12,7 @@ import {
   createVoiceCommand,
   degradePermission,
   getHealth,
+  getRealtimeUrl,
   listItems,
   listOutboxMessages,
   listPlaces,
@@ -42,6 +43,7 @@ export function HomeScreen() {
   const [banner, setBanner] = useState<string | null>(null);
   const [syncCursor, setSyncCursor] = useState(0);
   const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'offline'>('idle');
+  const [wsState, setWsState] = useState<'connecting' | 'connected' | 'closed'>('connecting');
   const [uploadQueueCount, setUploadQueueCount] = useState(0);
   const [outboxCount, setOutboxCount] = useState(0);
   const [voiceOpen, setVoiceOpen] = useState(false);
@@ -72,6 +74,41 @@ export function HomeScreen() {
 
   useEffect(() => {
     let active = true;
+    const socket = new WebSocket(getRealtimeUrl());
+
+    socket.onopen = () => {
+      if (active) {
+        setWsState('connected');
+      }
+    };
+
+    socket.onmessage = (event) => {
+      if (!active) {
+        return;
+      }
+      const message = JSON.parse(String(event.data)) as {
+        event_type?: string;
+        payload?: { next_cursor?: number };
+      };
+      if (
+        message.event_type === 'sync.response' &&
+        typeof message.payload?.next_cursor === 'number'
+      ) {
+        setSyncCursor(message.payload.next_cursor);
+      }
+    };
+
+    socket.onerror = () => {
+      if (active) {
+        setWsState('closed');
+      }
+    };
+
+    socket.onclose = () => {
+      if (active) {
+        setWsState('closed');
+      }
+    };
 
     getHealth()
       .then(() => {
@@ -135,6 +172,7 @@ export function HomeScreen() {
 
     return () => {
       active = false;
+      socket.close();
     };
   }, []);
 
@@ -470,7 +508,7 @@ export function HomeScreen() {
               : 'Checking backend health'}
         </Text>
         <Text style={styles.connectionStatus}>
-          {`Cursor ${syncCursor} · Outbox ${outboxCount} · Upload queue ${uploadQueueCount}`}
+          {`WS ${wsState} · Cursor ${syncCursor} · Outbox ${outboxCount} · Upload queue ${uploadQueueCount}`}
         </Text>
         {banner ? <Text style={styles.banner}>{banner}</Text> : null}
 

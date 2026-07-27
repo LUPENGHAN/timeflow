@@ -261,4 +261,8 @@ export function degradePermission(input: {
   });
 }
 
+export function getRealtimeUrl() {
+  return `${API_BASE_URL.replace(/^http/, 'ws').replace(/\/$/, '')}/ws`;
+}
+
 export { API_BASE_URL };
