@@ -109,6 +109,20 @@ class DomainEvent:
 
 
 @dataclass(slots=True)
+class OutboxMessage:
+    """Skeleton outbox message derived from domain events."""
+
+    id: str
+    event_id: str
+    channel: str
+    payload: JsonObject
+    status: str = "pending"
+    attempts: int = 0
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(slots=True)
 class Item:
     """Unified calendar/todo item used by P0 capabilities."""
 

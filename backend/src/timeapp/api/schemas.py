@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from timeapp.domain.models import (
     DomainEvent,
     Item,
+    OutboxMessage,
     Place,
     Reminder,
     RepeatRule,
@@ -139,6 +140,8 @@ class ItemResponse(BaseModel):
     end_at: datetime | None
     due_at: datetime | None
     place_text: str | None
+    version: int
+    updated_at: datetime
     reminders: list[ReminderResponse] = Field(default_factory=list)
 
     @classmethod
@@ -153,6 +156,8 @@ class ItemResponse(BaseModel):
             end_at=item.end_at,
             due_at=item.due_at,
             place_text=item.place_text,
+            version=item.version,
+            updated_at=item.updated_at,
             reminders=[ReminderResponse.from_domain(reminder) for reminder in reminders or []],
         )
 
@@ -266,6 +271,30 @@ class EventListResponse(BaseModel):
 
     next_cursor: int
     events: list[EventResponse]
+
+
+class OutboxMessageResponse(BaseModel):
+    """Skeleton outbox response."""
+
+    id: str
+    event_id: str
+    channel: str
+    payload: dict[str, Any]
+    status: str
+    attempts: int
+    created_at: datetime
+
+    @classmethod
+    def from_domain(cls, message: OutboxMessage) -> OutboxMessageResponse:
+        return cls(
+            id=message.id,
+            event_id=message.event_id,
+            channel=message.channel,
+            payload=message.payload,
+            status=message.status,
+            attempts=message.attempts,
+            created_at=message.created_at,
+        )
 
 
 class AgendaResponse(BaseModel):

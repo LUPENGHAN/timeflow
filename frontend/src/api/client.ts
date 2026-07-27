@@ -54,6 +54,8 @@ export type Item = {
   end_at: string | null;
   due_at: string | null;
   place_text: string | null;
+  version: number;
+  updated_at: string;
   reminders: {
     id: string;
     item_id: string;
@@ -106,6 +108,16 @@ export type HealthResponse = {
   status: 'ok';
 };
 
+export type OutboxMessage = {
+  id: string;
+  event_id: string;
+  channel: string;
+  payload: Record<string, unknown>;
+  status: string;
+  attempts: number;
+  created_at: string;
+};
+
 export function getHealth() {
   return apiFetch<HealthResponse>('/health');
 }
@@ -149,6 +161,10 @@ export function createWriteRequest(input: {
 
 export function listItems() {
   return apiFetch<Item[]>('/items');
+}
+
+export function listOutboxMessages() {
+  return apiFetch<OutboxMessage[]>('/events/outbox');
 }
 
 export function applyReminderAction(

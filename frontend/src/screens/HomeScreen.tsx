@@ -13,6 +13,7 @@ import {
   degradePermission,
   getHealth,
   listItems,
+  listOutboxMessages,
   listPlaces,
   listRepeatRules,
   rejectWriteRequest,
@@ -39,6 +40,10 @@ export function HomeScreen() {
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [syncCursor, setSyncCursor] = useState(0);
+  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'offline'>('idle');
+  const [uploadQueueCount, setUploadQueueCount] = useState(0);
+  const [outboxCount, setOutboxCount] = useState(0);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('到家后提醒我取快递');
   const [voiceSubmitting, setVoiceSubmitting] = useState(false);
@@ -116,6 +121,18 @@ export function HomeScreen() {
         }
       });
 
+    listOutboxMessages()
+      .then((response) => {
+        if (active) {
+          setOutboxCount(response.length);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setOutboxCount(0);
+        }
+      });
+
     return () => {
       active = false;
     };
@@ -142,11 +159,14 @@ export function HomeScreen() {
       end_at: null,
       due_at: null,
       place_text: null,
+      version: 0,
+      updated_at: new Date().toISOString(),
       reminders: [],
     };
 
     const previousItems = items;
     setSubmitting(true);
+    setUploadQueueCount((current) => current + 1);
     setBanner(null);
     setItems([optimisticItem, ...previousItems]);
 
@@ -166,6 +186,7 @@ export function HomeScreen() {
       setBanner('Create failed');
     } finally {
       setSubmitting(false);
+      setUploadQueueCount((current) => Math.max(0, current - 1));
     }
   }
 
@@ -278,6 +299,25 @@ export function HomeScreen() {
   async function refreshItems() {
     const refreshed = await listItems();
     setItems(refreshed);
+  }
+
+  async function handleSyncRequest() {
+    setSyncState('syncing');
+    try {
+      const response = await fetch(
+        `${process.env.EXPO_PUBLIC_API_URL ?? 'http://127.0.0.1:8000/api/v1'}/events?after=${syncCursor}`,
+      );
+      if (!response.ok) {
+        throw new Error('sync failed');
+      }
+      const payload = (await response.json()) as { next_cursor: number };
+      setSyncCursor(payload.next_cursor);
+      setSyncState('idle');
+      setBanner(`Synced to cursor ${payload.next_cursor}`);
+    } catch {
+      setSyncState('offline');
+      setBanner('Sync failed');
+    }
   }
 
   async function handleSubmitVoice() {
@@ -410,13 +450,15 @@ export function HomeScreen() {
             <Text style={styles.eyebrow}>Today</Text>
             <Text style={styles.title}>Timeflow</Text>
           </View>
-          <Pressable style={styles.syncButton}>
+          <Pressable onPress={handleSyncRequest} style={styles.syncButton}>
             <Text style={styles.syncButtonText}>
-              {healthState === 'ok'
-                ? 'Connected'
-                : healthState === 'failed'
-                  ? 'Offline'
-                  : 'Checking'}
+              {syncState === 'syncing'
+                ? 'Syncing'
+                : healthState === 'ok'
+                  ? 'Connected'
+                  : healthState === 'failed'
+                    ? 'Offline'
+                    : 'Checking'}
             </Text>
           </Pressable>
         </View>
@@ -426,6 +468,9 @@ export function HomeScreen() {
             : healthState === 'failed'
               ? 'Backend health check failed'
               : 'Checking backend health'}
+        </Text>
+        <Text style={styles.connectionStatus}>
+          {`Cursor ${syncCursor} · Outbox ${outboxCount} · Upload queue ${uploadQueueCount}`}
         </Text>
         {banner ? <Text style={styles.banner}>{banner}</Text> : null}
 

@@ -13,6 +13,7 @@ from timeapp.domain.enums import ItemStatus, WriteRequestStatus
 from timeapp.domain.models import (
     DomainEvent,
     Item,
+    OutboxMessage,
     Place,
     Reminder,
     RepeatRule,
@@ -32,6 +33,7 @@ class InMemoryStore:
     repeat_rules: dict[str, RepeatRule] = field(default_factory=dict)
     reminders: dict[str, Reminder] = field(default_factory=dict)
     events: list[DomainEvent] = field(default_factory=list)
+    outbox_messages: list[OutboxMessage] = field(default_factory=list)
     _lock: RLock = field(default_factory=RLock)
 
     def add_voice_command(self, voice_command: VoiceCommand) -> None:
@@ -138,6 +140,15 @@ class InMemoryStore:
 
         with self._lock:
             self.events.extend(events)
+            self.outbox_messages.extend(
+                OutboxMessage(
+                    id=f"outbox-{event.id}",
+                    event_id=event.id,
+                    channel="ws",
+                    payload=event.payload,
+                )
+                for event in events
+            )
 
     def list_items(self, user_id: str) -> list[Item]:
         """Return all visible items for a user."""
@@ -154,3 +165,9 @@ class InMemoryStore:
 
         with self._lock:
             return self.events[cursor:]
+
+    def list_outbox_messages(self) -> list[OutboxMessage]:
+        """Return in-memory outbox messages."""
+
+        with self._lock:
+            return list(self.outbox_messages)
