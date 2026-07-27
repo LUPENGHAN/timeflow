@@ -477,8 +477,7 @@ class TimeflowApplication:
                 for candidate in candidates or []
             ]
             payload["candidates"] = [
-                self._item_payload(candidate)
-                for candidate in candidates or []
+                self._item_payload(candidate) for candidate in candidates or []
             ]
         if "reminder" in command.payload:
             payload["reminders"] = [command.payload["reminder"]]
@@ -601,9 +600,7 @@ class TimeflowApplication:
             item_payload = {}
         entity_name = str(item_payload.get("type") or candidate_payload.get("entity") or "todo")
         entity = (
-            CommandEntity.CALENDAR_EVENT
-            if entity_name == "calendar_event"
-            else CommandEntity.TODO
+            CommandEntity.CALENDAR_EVENT if entity_name == "calendar_event" else CommandEntity.TODO
         )
         action = (
             CommandAction.UPDATE
