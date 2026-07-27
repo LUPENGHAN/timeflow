@@ -7,6 +7,7 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from 'expo-audio';
+import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -118,6 +119,7 @@ export function HomeScreen() {
   const [placeRadius, setPlaceRadius] = useState('100');
   const [placeDescription, setPlaceDescription] = useState('');
   const [placeBusy, setPlaceBusy] = useState(false);
+  const [saveCurrentPlaceBusy, setSaveCurrentPlaceBusy] = useState(false);
   const [deletingPlaceId, setDeletingPlaceId] = useState<string | null>(null);
   const [repeatPattern, setRepeatPattern] = useState('workdays');
   const [repeatTimeOfDay, setRepeatTimeOfDay] = useState('09:00');
@@ -484,6 +486,55 @@ export function HomeScreen() {
       setBanner('保存地点失败');
     } finally {
       setPlaceBusy(false);
+    }
+  }
+
+  async function handleSaveCurrentPlace() {
+    if (!placeLabel.trim() || saveCurrentPlaceBusy) {
+      return;
+    }
+
+    const radius = Number.parseInt(placeRadius, 10);
+    if (!Number.isFinite(radius) || radius <= 0) {
+      setBanner('半径不正确');
+      return;
+    }
+
+    setSaveCurrentPlaceBusy(true);
+    setBanner(null);
+    try {
+      const permission = await Location.getForegroundPermissionsAsync();
+      const granted = permission.granted
+        ? permission
+        : await Location.requestForegroundPermissionsAsync();
+      if (!granted.granted) {
+        setBanner('定位权限未开启');
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const accuracy = position.coords.accuracy ?? null;
+      await createPlace({
+        accuracy_meters: accuracy != null ? Math.round(accuracy) : null,
+        description: placeDescription.trim() || null,
+        label: placeLabel.trim(),
+        latitude: position.coords.latitude.toFixed(6),
+        longitude: position.coords.longitude.toFixed(6),
+        place_type: placeType,
+        radius_meters: radius,
+      });
+      await refresh();
+      setBanner(
+        accuracy !== null && accuracy > radius
+          ? '已保存当前位置，定位不精确，提醒可能不准'
+          : '当前位置已保存',
+      );
+    } catch (error) {
+      setBanner(error instanceof Error ? error.message : '保存当前位置失败');
+    } finally {
+      setSaveCurrentPlaceBusy(false);
     }
   }
 
@@ -868,6 +919,14 @@ export function HomeScreen() {
             style={[styles.primaryButton, placeBusy && styles.disabledButton]}
           >
             <Text style={styles.primaryButtonText}>{placeBusy ? '保存中' : '保存地点'}</Text>
+          </Pressable>
+          <Pressable
+            onPress={handleSaveCurrentPlace}
+            style={[styles.secondaryButton, saveCurrentPlaceBusy && styles.disabledButton]}
+          >
+            <Text style={styles.secondaryButtonText}>
+              {saveCurrentPlaceBusy ? '定位中' : '保存当前位置'}
+            </Text>
           </Pressable>
 
           {places.length > 0 ? (
