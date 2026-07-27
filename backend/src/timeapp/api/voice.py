@@ -14,6 +14,7 @@ from timeapp.api.schemas import (
     VoiceCommandResponse,
     WriteRequestResponse,
 )
+from timeapp.api.realtime import realtime_manager
 from timeapp.application.service import ApplicationError, TimeflowApplication
 from timeapp.domain.models import Identity
 
@@ -34,6 +35,8 @@ async def create_voice_command(
         result = app.submit_voice_command(request.transcript, identity)
     except ApplicationError as error:
         raise http_error(error) from error
+
+    await realtime_manager.broadcast_events(result.events)
 
     return VoiceCommandCreateResponse(
         voice_command=VoiceCommandResponse.from_domain(result.voice_command),

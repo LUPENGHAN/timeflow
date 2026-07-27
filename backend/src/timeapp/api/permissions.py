@@ -12,6 +12,7 @@ from timeapp.api.schemas import (
     PermissionDegradeRequest,
     PermissionDegradeResponse,
 )
+from timeapp.api.realtime import realtime_manager
 from timeapp.application.service import ApplicationError, TimeflowApplication
 from timeapp.domain.models import Identity
 
@@ -38,6 +39,8 @@ async def degrade_permission(
         )
     except ApplicationError as error:
         raise http_error(error) from error
+
+    await realtime_manager.broadcast_events(events)
 
     return PermissionDegradeResponse(
         item=ItemResponse.from_domain(item),

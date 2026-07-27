@@ -14,6 +14,7 @@ from timeapp.api.schemas import (
     WriteRequestResponse,
     WriteRequestUpdateRequest,
 )
+from timeapp.api.realtime import realtime_manager
 from timeapp.application.service import ApplicationError, TimeflowApplication
 from timeapp.domain.models import Identity
 
@@ -35,6 +36,7 @@ async def create_write_request(
         request.source_command_id,
         request.candidate_payload,
     )
+    await realtime_manager.broadcast_events(events)
     return WriteRequestCreateResponse(
         write_request=WriteRequestResponse.from_domain(write_request),
         events=[EventResponse.from_domain(event) for event in events],
@@ -58,6 +60,8 @@ async def update_write_request(
         )
     except ApplicationError as error:
         raise http_error(error) from error
+
+    await realtime_manager.broadcast_events(result.events)
 
     return ConfirmationResponse(
         write_request=WriteRequestResponse.from_domain(result.write_request),
@@ -107,6 +111,8 @@ async def confirm_write_request(
     except ApplicationError as error:
         raise http_error(error) from error
 
+    await realtime_manager.broadcast_events(result.events)
+
     return ConfirmationResponse(
         write_request=WriteRequestResponse.from_domain(result.write_request),
         events=[EventResponse.from_domain(event) for event in result.events],
@@ -125,6 +131,8 @@ async def reject_write_request(
         result = app.reject_write_request(write_request_id, identity)
     except ApplicationError as error:
         raise http_error(error) from error
+
+    await realtime_manager.broadcast_events(result.events)
 
     return ConfirmationResponse(
         write_request=WriteRequestResponse.from_domain(result.write_request),

@@ -14,6 +14,7 @@ from timeapp.api.schemas import (
     ItemResponse,
     ItemUpdateRequest,
 )
+from timeapp.api.realtime import realtime_manager
 from timeapp.application.service import ApplicationError, TimeflowApplication
 from timeapp.domain.enums import ItemStatus, ItemType
 from timeapp.domain.errors import ErrorCode
@@ -70,6 +71,7 @@ async def create_item(
         due_at=request.due_at,
         place_text=request.place_text,
     )
+    await realtime_manager.broadcast_events(events)
     return ItemCreateResponse(
         item=ItemResponse.from_domain(item, []),
         events=[EventResponse.from_domain(event) for event in events],
@@ -99,6 +101,8 @@ async def update_item(
     except ApplicationError as error:
         raise http_error(error) from error
 
+    await realtime_manager.broadcast_events(events)
+
     reminders = [reminder for reminder in app.list_reminders(identity) if reminder.item_id == item.id]
     return ItemMutationResponse(
         item=ItemResponse.from_domain(item, reminders),
@@ -118,6 +122,8 @@ async def complete_item(
         item, events = app.complete_item(identity, item_id)
     except ApplicationError as error:
         raise http_error(error) from error
+
+    await realtime_manager.broadcast_events(events)
 
     reminders = [reminder for reminder in app.list_reminders(identity) if reminder.item_id == item.id]
     return ItemMutationResponse(
@@ -139,6 +145,8 @@ async def cancel_complete_item(
     except ApplicationError as error:
         raise http_error(error) from error
 
+    await realtime_manager.broadcast_events(events)
+
     reminders = [reminder for reminder in app.list_reminders(identity) if reminder.item_id == item.id]
     return ItemMutationResponse(
         item=ItemResponse.from_domain(item, reminders),
@@ -158,6 +166,8 @@ async def delete_item(
         item, events = app.delete_item(identity, item_id)
     except ApplicationError as error:
         raise http_error(error) from error
+
+    await realtime_manager.broadcast_events(events)
 
     return ItemMutationResponse(
         item=ItemResponse.from_domain(item, []),

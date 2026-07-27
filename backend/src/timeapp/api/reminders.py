@@ -14,6 +14,7 @@ from timeapp.api.schemas import (
     ReminderActionResponse,
     ReminderResponse,
 )
+from timeapp.api.realtime import realtime_manager
 from timeapp.application.service import ApplicationError, TimeflowApplication
 from timeapp.domain.enums import ReminderPriority, ReminderTriggerType
 from timeapp.domain.errors import ErrorCode
@@ -63,6 +64,8 @@ async def create_reminder(
     except ApplicationError as error:
         raise http_error(error) from error
 
+    await realtime_manager.broadcast_events(events)
+
     return ReminderCreateResponse(
         reminder=ReminderResponse.from_domain(reminder),
         events=[EventResponse.from_domain(event) for event in events],
@@ -90,6 +93,8 @@ async def apply_reminder_action(
         )
     except ApplicationError as error:
         raise http_error(error) from error
+
+    await realtime_manager.broadcast_events(events)
 
     return ReminderActionResponse(
         reminder=ReminderResponse.from_domain(reminder),

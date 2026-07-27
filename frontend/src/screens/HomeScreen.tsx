@@ -97,6 +97,14 @@ export function HomeScreen() {
       const message = JSON.parse(String(event.data)) as { event_type?: string };
       if (message.event_type === 'sync.response') {
         refresh().catch(() => setBanner('同步失败'));
+        return;
+      }
+      if (
+        message.event_type &&
+        message.event_type !== 'connection.ready' &&
+        message.event_type !== 'connection.heartbeat'
+      ) {
+        refresh().catch(() => setBanner('同步失败'));
       }
     };
 
