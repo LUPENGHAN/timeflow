@@ -141,7 +141,7 @@ export function HomeScreen() {
     [items],
   );
   const todoItems = useMemo(() => items.filter((item) => item.type === 'todo'), [items]);
-  const visibleItems = viewMode === 'today' ? items : items;
+  const visibleItems = useMemo(() => filterItemsByMode(items, viewMode), [items, viewMode]);
 
   async function handlePrepareCreateItem() {
     if (!title.trim() || loading) {
@@ -963,6 +963,76 @@ function itemSummary(item: Item) {
     return `截止 ${formatDate(item.due_at)}${item.description ? ` · ${item.description}` : ''}`;
   }
   return item.description || statusLabel(item.status);
+}
+
+function filterItemsByMode(items: Item[], mode: ViewMode) {
+  const { end, start } = modeRange(mode, new Date());
+  return items
+    .filter((item) => {
+      const anchor = itemAnchorDate(item);
+      if (!anchor) {
+        return item.type === 'todo';
+      }
+      return anchor >= start && anchor < end;
+    })
+    .sort((left, right) => {
+      const leftAnchor = itemAnchorDate(left)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      const rightAnchor = itemAnchorDate(right)?.getTime() ?? Number.MAX_SAFE_INTEGER;
+      if (leftAnchor !== rightAnchor) {
+        return leftAnchor - rightAnchor;
+      }
+      return left.title.localeCompare(right.title, 'zh-CN');
+    });
+}
+
+function itemAnchorDate(item: Item) {
+  const anchor =
+    item.start_at ??
+    item.due_at ??
+    item.reminders.find((reminder) => reminder.trigger_at)?.trigger_at ??
+    null;
+  return anchor ? new Date(anchor) : null;
+}
+
+function modeRange(mode: ViewMode, now: Date) {
+  if (mode === 'week') {
+    const start = startOfWeek(now);
+    return { end: addDays(start, 7), start };
+  }
+  if (mode === 'month') {
+    const start = startOfMonth(now);
+    return { end: addMonths(start, 1), start };
+  }
+  const start = startOfDay(now);
+  return { end: addDays(start, 1), start };
+}
+
+function startOfDay(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate());
+}
+
+function startOfWeek(value: Date) {
+  const start = startOfDay(value);
+  const day = start.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  start.setDate(start.getDate() + mondayOffset);
+  return start;
+}
+
+function startOfMonth(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth(), 1);
+}
+
+function addDays(value: Date, days: number) {
+  const next = new Date(value);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function addMonths(value: Date, months: number) {
+  const next = new Date(value);
+  next.setMonth(next.getMonth() + months);
+  return next;
 }
 
 function previewTitle(payload: Record<string, unknown>) {
