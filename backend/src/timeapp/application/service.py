@@ -31,6 +31,7 @@ from timeapp.domain.models import (
     Identity,
     Item,
     Place,
+    RepeatRule,
     VoiceCommand,
     WriteRequest,
 )
@@ -222,6 +223,11 @@ class TimeflowApplication:
 
         return self.store.list_places(identity.user_id)
 
+    def list_repeat_rules(self, identity: Identity) -> list[RepeatRule]:
+        """List repeat rules for a user."""
+
+        return self.store.list_repeat_rules(identity.user_id)
+
     def create_item(
         self,
         identity: Identity,
@@ -289,6 +295,30 @@ class TimeflowApplication:
         )
         self.store.add_place(place)
         return place
+
+    def create_repeat_rule(
+        self,
+        identity: Identity,
+        pattern: str,
+        weekdays: list[int] | None = None,
+        time_of_day: str | None = None,
+        series_status: str = "active",
+    ) -> RepeatRule:
+        """Create a lightweight repeat-rule skeleton record."""
+
+        now = datetime.now(UTC)
+        repeat_rule = RepeatRule(
+            id=str(uuid4()),
+            user_id=identity.user_id,
+            pattern=pattern,
+            weekdays=weekdays or [],
+            time_of_day=time_of_day,
+            series_status=series_status,
+            created_at=now,
+            updated_at=now,
+        )
+        self.store.add_repeat_rule(repeat_rule)
+        return repeat_rule
 
     def create_write_request(
         self,

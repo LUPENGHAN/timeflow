@@ -7,6 +7,7 @@ from timeapp.domain.models import (
     Item,
     Place,
     Reminder,
+    RepeatRule,
     VoiceCommand,
     WriteRequest,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "Item",
     "Place",
     "Reminder",
+    "RepeatRule",
     "VoiceCommand",
     "WriteRequest",
 ]

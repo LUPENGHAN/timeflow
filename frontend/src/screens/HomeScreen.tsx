@@ -6,14 +6,17 @@ import {
   confirmWriteRequest,
   createItem,
   createPlace,
+  createRepeatRule,
   createWriteRequest,
   createVoiceCommand,
   getHealth,
   listItems,
   listPlaces,
+  listRepeatRules,
   rejectWriteRequest,
   type Item,
   type Place,
+  type RepeatRule,
   type VoiceCommandResult,
 } from '../api/client';
 import { colors, spacing } from '../constants/theme';
@@ -26,6 +29,7 @@ export function HomeScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('today');
   const [items, setItems] = useState<Item[]>([]);
   const [places, setPlaces] = useState<Place[]>([]);
+  const [repeatRules, setRepeatRules] = useState<RepeatRule[]>([]);
   const [title, setTitle] = useState('');
   const [itemType, setItemType] = useState<ItemType>('todo');
   const [description, setDescription] = useState('');
@@ -45,6 +49,8 @@ export function HomeScreen() {
   const [placeLabel, setPlaceLabel] = useState('');
   const [placeType, setPlaceType] = useState<Place['place_type']>('home');
   const [placeSubmitting, setPlaceSubmitting] = useState(false);
+  const [repeatPattern, setRepeatPattern] = useState('');
+  const [repeatRuleSubmitting, setRepeatRuleSubmitting] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -82,6 +88,18 @@ export function HomeScreen() {
       .catch(() => {
         if (active) {
           setPlaces([]);
+        }
+      });
+
+    listRepeatRules()
+      .then((response) => {
+        if (active) {
+          setRepeatRules(response);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setRepeatRules([]);
         }
       });
 
@@ -156,6 +174,27 @@ export function HomeScreen() {
       setBanner('Place save failed');
     } finally {
       setPlaceSubmitting(false);
+    }
+  }
+
+  async function handleCreateRepeatRule() {
+    if (!repeatPattern.trim() || repeatRuleSubmitting) {
+      return;
+    }
+
+    setRepeatRuleSubmitting(true);
+    try {
+      const result = await createRepeatRule({
+        pattern: repeatPattern.trim(),
+        weekdays: [],
+      });
+      setRepeatRules((current) => [result.repeat_rule, ...current]);
+      setRepeatPattern('');
+      setBanner('Repeat rule saved');
+    } catch {
+      setBanner('Repeat rule save failed');
+    } finally {
+      setRepeatRuleSubmitting(false);
     }
   }
 
@@ -411,6 +450,45 @@ export function HomeScreen() {
                 <View style={styles.rowBody}>
                   <Text style={styles.itemTitle}>{place.label}</Text>
                   <Text style={styles.itemMeta}>{place.radius_meters}m radius</Text>
+                </View>
+              </View>
+            ))
+          )}
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Repeat</Text>
+            <Text style={styles.count}>{repeatRules.length}</Text>
+          </View>
+          <View style={styles.form}>
+            <TextInput
+              value={repeatPattern}
+              onChangeText={setRepeatPattern}
+              placeholder="Repeat pattern"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+            />
+            <Pressable
+              onPress={handleCreateRepeatRule}
+              style={[styles.primaryButton, repeatRuleSubmitting && styles.primaryButtonDisabled]}
+            >
+              <Text style={styles.primaryButtonText}>
+                {repeatRuleSubmitting ? 'Saving' : 'Save repeat'}
+              </Text>
+            </Pressable>
+          </View>
+          {repeatRules.length === 0 ? (
+            <Text style={styles.emptyState}>No repeat rules yet.</Text>
+          ) : (
+            repeatRules.map((rule) => (
+              <View key={rule.id} style={styles.timelineRow}>
+                <Text style={styles.time}>{rule.series_status}</Text>
+                <View style={styles.rowBody}>
+                  <Text style={styles.itemTitle}>{rule.pattern}</Text>
+                  <Text style={styles.itemMeta}>
+                    {rule.weekdays.length > 0 ? rule.weekdays.join(', ') : 'No weekdays'}
+                  </Text>
                 </View>
               </View>
             ))

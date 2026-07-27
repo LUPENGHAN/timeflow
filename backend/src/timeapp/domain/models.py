@@ -144,6 +144,20 @@ class Place:
 
 
 @dataclass(slots=True)
+class RepeatRule:
+    """Skeleton repeat rule model."""
+
+    id: str
+    user_id: str
+    pattern: str
+    weekdays: list[int] = field(default_factory=list)
+    time_of_day: str | None = None
+    series_status: str = "active"
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(slots=True)
 class Reminder:
     """P0 reminder rule bound to an item."""
 

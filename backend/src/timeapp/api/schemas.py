@@ -7,7 +7,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from timeapp.domain.models import DomainEvent, Item, Place, Reminder, VoiceCommand, WriteRequest
+from timeapp.domain.models import (
+    DomainEvent,
+    Item,
+    Place,
+    Reminder,
+    RepeatRule,
+    VoiceCommand,
+    WriteRequest,
+)
 
 
 class VoiceCommandCreateRequest(BaseModel):
@@ -250,3 +258,38 @@ class PlaceCreateResponse(BaseModel):
     """Created place response."""
 
     place: PlaceResponse
+
+
+class RepeatRuleResponse(BaseModel):
+    """Skeleton repeat rule response."""
+
+    id: str
+    pattern: str
+    weekdays: list[int]
+    time_of_day: str | None
+    series_status: str
+
+    @classmethod
+    def from_domain(cls, repeat_rule: RepeatRule) -> RepeatRuleResponse:
+        return cls(
+            id=repeat_rule.id,
+            pattern=repeat_rule.pattern,
+            weekdays=repeat_rule.weekdays,
+            time_of_day=repeat_rule.time_of_day,
+            series_status=repeat_rule.series_status,
+        )
+
+
+class RepeatRuleCreateRequest(BaseModel):
+    """Create a repeat rule skeleton record."""
+
+    pattern: str = Field(min_length=1)
+    weekdays: list[int] = Field(default_factory=list)
+    time_of_day: str | None = None
+    series_status: str = "active"
+
+
+class RepeatRuleCreateResponse(BaseModel):
+    """Created repeat rule response."""
+
+    repeat_rule: RepeatRuleResponse

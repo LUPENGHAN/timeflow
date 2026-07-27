@@ -79,6 +79,14 @@ export type Place = {
   description: string | null;
 };
 
+export type RepeatRule = {
+  id: string;
+  pattern: string;
+  weekdays: number[];
+  time_of_day: string | null;
+  series_status: string;
+};
+
 export type LocalCache = {
   items: Item[];
   reminders: Reminder[];
@@ -149,6 +157,23 @@ export function createPlace(input: {
   accuracy_meters?: number | null;
 }) {
   return apiFetch<{ place: Place }>('/places', {
+    body: JSON.stringify(input),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+  });
+}
+
+export function listRepeatRules() {
+  return apiFetch<RepeatRule[]>('/repeat-rules');
+}
+
+export function createRepeatRule(input: {
+  pattern: string;
+  weekdays?: number[];
+  time_of_day?: string | null;
+  series_status?: string;
+}) {
+  return apiFetch<{ repeat_rule: RepeatRule }>('/repeat-rules', {
     body: JSON.stringify(input),
     headers: { 'Content-Type': 'application/json' },
     method: 'POST',
