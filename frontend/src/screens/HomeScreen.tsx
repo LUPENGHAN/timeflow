@@ -49,7 +49,11 @@ export function HomeScreen() {
           </View>
           <Pressable style={styles.syncButton}>
             <Text style={styles.syncButtonText}>
-              {healthState === 'ok' ? 'Connected' : healthState === 'failed' ? 'Offline' : 'Checking'}
+              {healthState === 'ok'
+                ? 'Connected'
+                : healthState === 'failed'
+                  ? 'Offline'
+                  : 'Checking'}
             </Text>
           </Pressable>
         </View>
