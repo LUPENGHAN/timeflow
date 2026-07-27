@@ -64,6 +64,7 @@ type ManualOperation =
   | 'cancel_complete_item'
   | 'delete_item';
 type ReminderAction =
+  | 'armed'
   | 'registered'
   | 'delivered'
   | 'failed'
@@ -124,6 +125,7 @@ export function HomeScreen() {
   const [reminderDraft, setReminderDraft] = useState<ReminderDraft>(defaultReminderDraft());
   const [reminderBusy, setReminderBusy] = useState(false);
   const [actingReminderId, setActingReminderId] = useState<string | null>(null);
+  const [checkingPlaceReminders, setCheckingPlaceReminders] = useState(false);
   const [placeLabel, setPlaceLabel] = useState('家');
   const [placeType, setPlaceType] = useState<Place['place_type']>('home');
   const [placeRadius, setPlaceRadius] = useState('100');
@@ -258,6 +260,7 @@ export function HomeScreen() {
   );
   const todoItems = useMemo(() => items.filter((item) => item.type === 'todo'), [items]);
   const itemTitleById = useMemo(() => new Map(items.map((item) => [item.id, item.title])), [items]);
+  const placeById = useMemo(() => new Map(places.map((place) => [place.id, place])), [places]);
   const processedNotificationIdsRef = useRef(new Set<string>());
   const visibleItems = useMemo(() => filterItemsByMode(items, viewMode), [items, viewMode]);
 
@@ -729,6 +732,46 @@ export function HomeScreen() {
     }
   }
 
+  async function handleCheckPlaceReminders() {
+    if (checkingPlaceReminders) {
+      return;
+    }
+
+    setCheckingPlaceReminders(true);
+    setBanner(null);
+    try {
+      const permission = await Location.getForegroundPermissionsAsync();
+      const granted = permission.granted
+        ? permission
+        : await Location.requestForegroundPermissionsAsync();
+      if (!granted.granted) {
+        setBanner('定位权限未开启');
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      let appliedCount = 0;
+      for (const reminder of reminders) {
+        const action = resolvePlaceReminderAction(reminder, placeById, position.coords);
+        if (!action) {
+          continue;
+        }
+        await applyReminderAction(reminder.id, { action });
+        appliedCount += 1;
+      }
+      if (appliedCount > 0) {
+        await refresh();
+      }
+      setBanner(appliedCount > 0 ? `已更新 ${appliedCount} 条地点提醒` : '没有触发地点提醒');
+    } catch (error) {
+      setBanner(error instanceof Error ? error.message : '检查地点提醒失败');
+    } finally {
+      setCheckingPlaceReminders(false);
+    }
+  }
+
   async function handleConfirmPending(writeRequestId: string) {
     try {
       await confirmWriteRequest(writeRequestId);
@@ -1120,6 +1163,14 @@ export function HomeScreen() {
             <Text style={styles.sectionTitle}>提醒总览</Text>
             <Text style={styles.subtle}>{reminders.length} 条</Text>
           </View>
+          <Pressable
+            onPress={handleCheckPlaceReminders}
+            style={[styles.secondaryButton, checkingPlaceReminders && styles.disabledButton]}
+          >
+            <Text style={styles.secondaryButtonText}>
+              {checkingPlaceReminders ? '检查中' : '检查地点提醒'}
+            </Text>
+          </Pressable>
           {reminders.length > 0 ? (
             <View style={styles.placeList}>
               {reminders.map((reminder) => (
@@ -2185,6 +2236,68 @@ function reminderOverviewMeta(reminder: Reminder) {
   return `${reminderLabel(reminder)} · 通知 ${reminder.local_registration_status} · ${fallback}`;
 }
 
+function resolvePlaceReminderAction(
+  reminder: Reminder,
+  placeById: Map<string, Place>,
+  currentCoords: { latitude: number; longitude: number },
+): ReminderAction | null {
+  if (!reminder.place_id || reminder.status === 'delivered' || reminder.status === 'dismissed') {
+    return null;
+  }
+  const place = placeById.get(reminder.place_id);
+  if (!place?.latitude || !place.longitude) {
+    return null;
+  }
+
+  const distanceMeters = distanceBetweenMeters(
+    currentCoords.latitude,
+    currentCoords.longitude,
+    Number.parseFloat(place.latitude),
+    Number.parseFloat(place.longitude),
+  );
+  if (!Number.isFinite(distanceMeters)) {
+    return null;
+  }
+  const inside = distanceMeters <= place.radius_meters;
+
+  if (reminder.trigger_type === 'enter_place' && inside) {
+    return 'delivered';
+  }
+  if (reminder.trigger_type === 'leave_place' && !inside) {
+    return 'delivered';
+  }
+  if (reminder.trigger_type === 'return_to_place') {
+    if (reminder.status === 'pending' && !inside) {
+      return 'armed';
+    }
+    if (reminder.status === 'armed' && inside) {
+      return 'delivered';
+    }
+  }
+  return null;
+}
+
+function distanceBetweenMeters(
+  fromLatitude: number,
+  fromLongitude: number,
+  toLatitude: number,
+  toLongitude: number,
+) {
+  const earthRadiusMeters = 6371000;
+  const fromLat = degreesToRadians(fromLatitude);
+  const toLat = degreesToRadians(toLatitude);
+  const deltaLat = degreesToRadians(toLatitude - fromLatitude);
+  const deltaLon = degreesToRadians(toLongitude - fromLongitude);
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(fromLat) * Math.cos(toLat) * Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+  return earthRadiusMeters * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function degreesToRadians(value: number) {
+  return (value * Math.PI) / 180;
+}
+
 function priorityLabel(priority: ReminderDraft['priority']) {
   if (priority === 'low') {
     return '低';
@@ -2243,6 +2356,9 @@ function outboxMessageMeta(message: OutboxMessage) {
 }
 
 function reminderActionSuccessLabel(action: ReminderAction) {
+  if (action === 'armed') {
+    return '提醒已布防';
+  }
   if (action === 'registered') {
     return '提醒已注册';
   }

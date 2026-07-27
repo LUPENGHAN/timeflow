@@ -227,6 +227,7 @@ export function applyReminderAction(
   reminderId: string,
   input: {
     action:
+      | 'armed'
       | 'registered'
       | 'delivered'
       | 'failed'
