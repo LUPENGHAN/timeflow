@@ -102,6 +102,68 @@ def test_voice_query_returns_matching_agenda_without_write_request() -> None:
     app.dependency_overrides.clear()
 
 
+def test_voice_query_supports_tomorrow_and_week_ranges() -> None:
+    """Voice agenda queries should understand tomorrow and this-week windows."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        tomorrow_at = (datetime.now(UTC) + timedelta(days=1)).replace(
+            hour=9,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        week_at = (datetime.now(UTC) + timedelta(days=4)).replace(
+            hour=10,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        later_at = (datetime.now(UTC) + timedelta(days=9)).replace(
+            hour=10,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+        for title, start_at in [
+            ("明天会议", tomorrow_at),
+            ("本周体检", week_at),
+            ("下周出差", later_at),
+        ]:
+            response = client.post(
+                "/api/v1/items",
+                json={
+                    "type": "calendar_event",
+                    "title": title,
+                    "start_at": start_at.isoformat(),
+                },
+            )
+            assert response.status_code == 200
+
+        tomorrow_response = client.post(
+            "/api/v1/voice/commands",
+            json={"transcript": "明天有什么安排？"},
+        )
+        assert tomorrow_response.status_code == 200
+        assert [candidate["title"] for candidate in tomorrow_response.json()["candidates"]] == [
+            "明天会议",
+        ]
+
+        week_response = client.post(
+            "/api/v1/voice/commands",
+            json={"transcript": "本周有什么安排？"},
+        )
+        assert week_response.status_code == 200
+        assert [candidate["title"] for candidate in week_response.json()["candidates"]] == [
+            "明天会议",
+            "本周体检",
+        ]
+
+    app.dependency_overrides.clear()
+
+
 def test_voice_update_requires_candidate_selection_before_confirm() -> None:
     """Ambiguous voice updates should create a pending write request that needs selection."""
 

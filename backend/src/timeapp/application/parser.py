@@ -20,14 +20,15 @@ class MockCommandParser:
         now = datetime.now(UTC)
 
         if self._looks_like_query(normalized):
+            range_start, range_end = self._extract_query_range(normalized, now)
             return Command(
                 id=command_id,
                 identity=identity,
                 action=CommandAction.QUERY,
                 entity=CommandEntity.CALENDAR_EVENT,
                 title=normalized,
-                time_range_start=now,
-                time_range_end=now + timedelta(days=1),
+                time_range_start=range_start,
+                time_range_end=range_end,
             )
 
         if "改到" in normalized or "改为" in normalized:
@@ -127,6 +128,19 @@ class MockCommandParser:
 
     def _looks_like_query(self, transcript: str) -> bool:
         return "什么安排" in transcript or transcript.startswith("查询")
+
+    def _extract_query_range(self, transcript: str, now: datetime) -> tuple[datetime, datetime]:
+        if "明天" in transcript:
+            start = self._start_of_day(now + timedelta(days=1))
+            return start, start + timedelta(days=1)
+        if "本周" in transcript or "这周" in transcript:
+            start = self._start_of_day(now)
+            return start, start + timedelta(days=7)
+        start = self._start_of_day(now)
+        return start, start + timedelta(days=1)
+
+    def _start_of_day(self, value: datetime) -> datetime:
+        return value.replace(hour=0, minute=0, second=0, microsecond=0)
 
     def _looks_like_delete(self, transcript: str) -> bool:
         return transcript.startswith("取消") or transcript.startswith("删除")
