@@ -49,6 +49,38 @@ class MockCommandParser:
                 },
             )
 
+        if self._looks_like_delete(normalized):
+            reference_query = self._extract_delete_reference(normalized)
+            return Command(
+                id=command_id,
+                identity=identity,
+                action=CommandAction.DELETE,
+                entity=CommandEntity.CALENDAR_EVENT
+                if "会议" in normalized or "日程" in normalized or "安排" in normalized
+                else CommandEntity.TODO,
+                title=reference_query,
+                payload={
+                    "operation": "delete_item",
+                    "reference_query": reference_query,
+                    "source_text": normalized,
+                },
+            )
+
+        if self._looks_like_complete(normalized):
+            reference_query = self._extract_complete_reference(normalized)
+            return Command(
+                id=command_id,
+                identity=identity,
+                action=CommandAction.COMPLETE,
+                entity=CommandEntity.TODO,
+                title=reference_query,
+                payload={
+                    "operation": "complete_item",
+                    "reference_query": reference_query,
+                    "source_text": normalized,
+                },
+            )
+
         if "提醒" in normalized:
             title = self._extract_title_after_reminder(normalized)
             trigger_type = self._extract_place_trigger(normalized)
@@ -95,6 +127,23 @@ class MockCommandParser:
 
     def _looks_like_query(self, transcript: str) -> bool:
         return "什么安排" in transcript or transcript.startswith("查询")
+
+    def _looks_like_delete(self, transcript: str) -> bool:
+        return transcript.startswith("取消") or transcript.startswith("删除")
+
+    def _looks_like_complete(self, transcript: str) -> bool:
+        return "买好了" in transcript or "完成了" in transcript or transcript.endswith("完成")
+
+    def _extract_delete_reference(self, transcript: str) -> str:
+        reference = transcript.removeprefix("取消").removeprefix("删除").strip()
+        reference = reference.replace("明天的", "").replace("明天", "").strip()
+        return "会议" if "会议" in reference else reference
+
+    def _extract_complete_reference(self, transcript: str) -> str:
+        reference = transcript
+        for marker in ["买好了", "完成了", "完成"]:
+            reference = reference.replace(marker, "")
+        return reference.removeprefix("把").strip()
 
     def _extract_title_after_reminder(self, transcript: str) -> str:
         if "提醒我" in transcript:

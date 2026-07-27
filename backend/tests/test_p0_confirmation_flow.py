@@ -173,6 +173,59 @@ def test_voice_update_requires_candidate_selection_before_confirm() -> None:
     app.dependency_overrides.clear()
 
 
+def test_voice_delete_and_complete_create_confirmable_write_requests() -> None:
+    """Voice delete and complete intents should still stop at confirmation."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        meeting = client.post(
+            "/api/v1/items",
+            json={"type": "calendar_event", "title": "会议"},
+        )
+        assert meeting.status_code == 200
+        todo = client.post(
+            "/api/v1/items",
+            json={"type": "todo", "title": "买牛奶"},
+        )
+        assert todo.status_code == 200
+
+        delete_response = client.post(
+            "/api/v1/voice/commands",
+            json={"transcript": "取消明天的会议"},
+        )
+        assert delete_response.status_code == 200
+        delete_body = delete_response.json()
+        assert delete_body["write_request"]["candidate_payload"]["operation"] == "delete_item"
+        assert client.get("/api/v1/items").json()[0]["status"] == "active"
+
+        delete_confirmed = client.post(
+            f"/api/v1/write-requests/{delete_body['write_request']['id']}/confirm",
+        )
+        assert delete_confirmed.status_code == 200
+        visible_after_delete = client.get("/api/v1/items").json()
+        assert [item["title"] for item in visible_after_delete] == ["买牛奶"]
+
+        complete_response = client.post(
+            "/api/v1/voice/commands",
+            json={"transcript": "牛奶买好了"},
+        )
+        assert complete_response.status_code == 200
+        complete_body = complete_response.json()
+        assert complete_body["write_request"]["candidate_payload"]["operation"] == "complete_item"
+
+        complete_confirmed = client.post(
+            f"/api/v1/write-requests/{complete_body['write_request']['id']}/confirm",
+        )
+        assert complete_confirmed.status_code == 200
+        items = client.get("/api/v1/items").json()
+        assert items[0]["title"] == "买牛奶"
+        assert items[0]["status"] == "completed"
+
+    app.dependency_overrides.clear()
+
+
 def test_events_endpoint_returns_cursor_sync_events() -> None:
     """HTTP sync should expose domain events with a cursor."""
 
