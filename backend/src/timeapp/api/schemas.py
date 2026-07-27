@@ -95,6 +95,7 @@ class VoiceCommandCreateResponse(BaseModel):
     write_request: WriteRequestResponse | None
     events: list[EventResponse]
     clarification: str | None = None
+    candidates: list[ItemResponse] = Field(default_factory=list)
 
 
 class ConfirmationResponse(BaseModel):

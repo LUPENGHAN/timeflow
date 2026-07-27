@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
 from timeapp.application.parser import MockCommandParser
+from timeapp.application.reference_resolver import ReferenceResolver
 from timeapp.application.store import InMemoryStore
 from timeapp.capabilities.calendar.handler import CalendarCapability
 from timeapp.capabilities.reminder.handler import ReminderCapability
@@ -44,6 +45,7 @@ class VoiceCommandResult:
     write_request: WriteRequest | None
     events: list[DomainEvent]
     clarification: str | None = None
+    candidates: list[Item] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -60,6 +62,7 @@ class TimeflowApplication:
     def __init__(self, store: InMemoryStore | None = None) -> None:
         self.store = store or InMemoryStore()
         self.parser = MockCommandParser()
+        self.reference_resolver = ReferenceResolver()
         self.calendar = CalendarCapability()
         self.todo = TodoCapability()
         self.reminder = ReminderCapability()
@@ -92,7 +95,43 @@ class TimeflowApplication:
             self.store.add_events(events)
             return VoiceCommandResult(voice_command, command, None, events)
 
-        candidate_payload = self._candidate_payload(command)
+        candidates: list[Item] = []
+        if command.action in {CommandAction.UPDATE, CommandAction.DELETE, CommandAction.COMPLETE}:
+            candidates = self.reference_resolver.resolve_item_candidates(command, self.store)
+            if not candidates:
+                voice_command.status = VoiceCommandStatus.NEEDS_CLARIFICATION
+                voice_command.updated_at = datetime.now(UTC)
+                events.append(
+                    self._event(
+                        DomainEventType.COMMAND_STATUS_CHANGED,
+                        "voice_command",
+                        voice_command.id,
+                        {
+                            "status": voice_command.status.value,
+                            "command_id": command.id,
+                        },
+                    )
+                )
+                self.store.add_events(events)
+                return VoiceCommandResult(
+                    voice_command,
+                    command,
+                    None,
+                    events,
+                    clarification="没找到要修改的事项，请再说清楚一点。",
+                    candidates=[],
+                )
+            self.store.add_events(events)
+            return VoiceCommandResult(
+                voice_command,
+                command,
+                None,
+                events,
+                clarification="找到候选事项，请先选择要修改的对象。",
+                candidates=candidates,
+            )
+
+        candidate_payload = self._candidate_payload(command, candidates)
         write_request = WriteRequest(
             id=str(uuid4()),
             identity=identity,
@@ -224,7 +263,7 @@ class TimeflowApplication:
             )
         return write_request
 
-    def _candidate_payload(self, command: Command) -> dict[str, Any]:
+    def _candidate_payload(self, command: Command, candidates: list[Item] | None = None) -> dict[str, Any]:
         operation = str(command.payload.get("operation", ""))
         if not operation:
             raise ApplicationError(
@@ -244,6 +283,22 @@ class TimeflowApplication:
                 "priority": command.priority.value,
             },
         }
+        if command.action in {CommandAction.UPDATE, CommandAction.DELETE, CommandAction.COMPLETE}:
+            payload["operations"] = [
+                {
+                    "op": operation,
+                    "target_id": candidate.id,
+                    "target_title": candidate.title,
+                    "changes": {
+                        "title": command.title,
+                        "start_at": command.start_at.isoformat() if command.start_at else None,
+                        "end_at": command.end_at.isoformat() if command.end_at else None,
+                        "due_at": command.due_at.isoformat() if command.due_at else None,
+                    },
+                }
+                for candidate in candidates or []
+            ]
+            payload["candidates"] = [self._item_payload(candidate) for candidate in candidates or []]
         if "reminder" in command.payload:
             payload["reminders"] = [command.payload["reminder"]]
         return payload

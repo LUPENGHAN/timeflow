@@ -30,6 +30,25 @@ class MockCommandParser:
                 time_range_end=now + timedelta(days=1),
             )
 
+        if "改到" in normalized or "改为" in normalized:
+            start_at = self._extract_update_time(normalized, now)
+            return Command(
+                id=command_id,
+                identity=identity,
+                action=CommandAction.UPDATE,
+                entity=CommandEntity.CALENDAR_EVENT
+                if "会议" in normalized or "日程" in normalized
+                else CommandEntity.TODO,
+                title="会议" if "会议" in normalized else normalized,
+                start_at=start_at,
+                end_at=start_at + timedelta(hours=1) if start_at else None,
+                payload={
+                    "operation": "update_item",
+                    "reference_query": "会议" if "会议" in normalized else normalized,
+                    "source_text": normalized,
+                },
+            )
+
         if "提醒" in normalized:
             title = self._extract_title_after_reminder(normalized)
             trigger_type = self._extract_place_trigger(normalized)
@@ -90,3 +109,10 @@ class MockCommandParser:
         if "回到" in transcript:
             return ReminderTriggerType.RETURN_TO_PLACE
         return ReminderTriggerType.TIME
+
+    def _extract_update_time(self, transcript: str, now: datetime) -> datetime | None:
+        if "四点" in transcript or "4点" in transcript or "16点" in transcript:
+            return (now + timedelta(days=1)).replace(hour=16, minute=0, second=0, microsecond=0)
+        if "明天" in transcript:
+            return (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+        return None

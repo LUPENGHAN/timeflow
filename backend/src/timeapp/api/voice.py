@@ -8,6 +8,7 @@ from timeapp.api.dependencies import get_identity, get_timeflow_app
 from timeapp.api.errors import http_error
 from timeapp.api.schemas import (
     EventResponse,
+    ItemResponse,
     VoiceCommandCreateRequest,
     VoiceCommandCreateResponse,
     VoiceCommandResponse,
@@ -41,4 +42,5 @@ async def create_voice_command(
         else None,
         events=[EventResponse.from_domain(event) for event in result.events],
         clarification=result.clarification,
+        candidates=[ItemResponse.from_domain(item) for item in result.candidates],
     )

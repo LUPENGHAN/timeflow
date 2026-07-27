@@ -41,6 +41,7 @@ export type VoiceCommandResult = {
   write_request: WriteRequest | null;
   events: EventMessage[];
   clarification: string | null;
+  candidates: Item[];
 };
 
 export type Item = {

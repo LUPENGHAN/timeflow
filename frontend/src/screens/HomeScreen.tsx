@@ -31,6 +31,7 @@ export function HomeScreen() {
   const [voiceSubmitting, setVoiceSubmitting] = useState(false);
   const [voiceResult, setVoiceResult] = useState<VoiceCommandResult | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
+  const [selectedVoiceCandidateId, setSelectedVoiceCandidateId] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -127,6 +128,7 @@ export function HomeScreen() {
     try {
       const result = await createVoiceCommand(voiceTranscript.trim());
       setVoiceResult(result);
+      setSelectedVoiceCandidateId(null);
       setVoiceStatus(result.write_request ? 'Write request created' : 'No write requested');
     } catch {
       setVoiceStatus('Voice command failed');
@@ -359,12 +361,27 @@ export function HomeScreen() {
               </View>
             ) : null}
 
-            {voiceResult?.write_request ? (
+            {voiceResult?.candidates?.length ? (
               <View style={styles.voiceCard}>
                 <Text style={styles.confirmationLabel}>CandidateListCard</Text>
-                <Text style={styles.cardText}>
-                  {String(voiceResult.write_request.candidate_payload.operation ?? 'pending')}
-                </Text>
+                <View style={styles.candidateList}>
+                  {voiceResult.candidates.map((candidate) => (
+                    <Pressable
+                      key={candidate.id}
+                      onPress={() => {
+                        setSelectedVoiceCandidateId(candidate.id);
+                        setVoiceStatus(`Selected ${candidate.title}`);
+                      }}
+                      style={[
+                        styles.candidateRow,
+                        selectedVoiceCandidateId === candidate.id && styles.candidateRowActive,
+                      ]}
+                    >
+                      <Text style={styles.itemTitle}>{candidate.title}</Text>
+                      <Text style={styles.itemMeta}>{candidate.type}</Text>
+                    </Pressable>
+                  ))}
+                </View>
               </View>
             ) : null}
 
@@ -427,6 +444,19 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 15,
     marginTop: spacing.sm,
+  },
+  candidateList: {
+    gap: spacing.sm,
+  },
+  candidateRow: {
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  candidateRowActive: {
+    borderColor: colors.accent,
   },
   codeText: {
     backgroundColor: colors.background,
