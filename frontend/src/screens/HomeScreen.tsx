@@ -61,6 +61,7 @@ export function HomeScreen() {
   const [pendingDraftTitle, setPendingDraftTitle] = useState('');
   const [placeLabel, setPlaceLabel] = useState('');
   const [placeType, setPlaceType] = useState<Place['place_type']>('home');
+  const [placeRadius, setPlaceRadius] = useState<50 | 100 | 200>(100);
   const [placeSubmitting, setPlaceSubmitting] = useState(false);
   const [repeatPattern, setRepeatPattern] = useState('');
   const [repeatRuleSubmitting, setRepeatRuleSubmitting] = useState(false);
@@ -240,12 +241,39 @@ export function HomeScreen() {
       const result = await createPlace({
         label: placeLabel.trim(),
         place_type: placeType,
+        radius_meters: placeRadius,
       });
       setPlaces((current) => [result.place, ...current]);
       setPlaceLabel('');
       setBanner('Place saved');
     } catch {
       setBanner('Place save failed');
+    } finally {
+      setPlaceSubmitting(false);
+    }
+  }
+
+  async function handleSaveCurrentPlace() {
+    if (placeSubmitting) {
+      return;
+    }
+
+    setPlaceSubmitting(true);
+    try {
+      const result = await createPlace({
+        accuracy_meters: 25,
+        description: 'current location skeleton',
+        label: placeLabel.trim() || 'Current location',
+        latitude: '31.2304',
+        longitude: '121.4737',
+        place_type: placeType,
+        radius_meters: placeRadius,
+      });
+      setPlaces((current) => [result.place, ...current]);
+      setPlaceLabel('');
+      setBanner('Current place saved');
+    } catch {
+      setBanner('Current place save failed');
     } finally {
       setPlaceSubmitting(false);
     }
@@ -662,6 +690,21 @@ export function HomeScreen() {
               placeholderTextColor={colors.muted}
               style={styles.input}
             />
+            <View style={styles.segmentedCompact}>
+              {([50, 100, 200] as const).map((radius) => (
+                <Pressable
+                  key={radius}
+                  onPress={() => setPlaceRadius(radius)}
+                  style={[styles.segment, placeRadius === radius && styles.segmentActive]}
+                >
+                  <Text
+                    style={[styles.segmentText, placeRadius === radius && styles.segmentTextActive]}
+                  >
+                    {radius}m
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
             <Pressable
               onPress={handleCreatePlace}
               style={[styles.primaryButton, placeSubmitting && styles.primaryButtonDisabled]}
@@ -669,6 +712,12 @@ export function HomeScreen() {
               <Text style={styles.primaryButtonText}>
                 {placeSubmitting ? 'Saving' : 'Save place'}
               </Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSaveCurrentPlace}
+              style={[styles.secondaryButton, placeSubmitting && styles.primaryButtonDisabled]}
+            >
+              <Text style={styles.secondaryButtonText}>Save current</Text>
             </Pressable>
           </View>
           {places.length === 0 ? (

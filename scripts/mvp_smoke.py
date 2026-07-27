@@ -273,18 +273,56 @@ def main() -> None:
             len(multi_item["reminders"]) == 2, "same item displays multiple reminders"
         )
 
-        for place_type in ("home", "work", "custom", "temporary_parking"):
+        saved_places: dict[str, dict[str, Any]] = {}
+        for index, place_type in enumerate(
+            ("home", "work", "custom", "temporary_parking")
+        ):
             place = post_json(
                 client,
                 "/api/v1/places",
                 {
                     "label": place_type,
                     "place_type": place_type,
-                    "radius_meters": 100,
+                    "radius_meters": (50, 100, 200, 100)[index],
                     "accuracy_meters": 25,
                 },
             )["place"]
+            saved_places[place_type] = place
             expect(place["place_type"] == place_type, f"saved {place_type} place")
+
+        parking_wr = post_json(
+            client,
+            "/api/v1/write-requests",
+            {
+                "source_command_id": "smoke-parking-reminder",
+                "candidate_payload": {
+                    "operation": "create_todo_with_reminder",
+                    "item": {"title": "停车位置提醒", "type": "todo"},
+                    "reminders": [
+                        {
+                            "trigger_type": "return_to_place",
+                            "place_ref": saved_places["temporary_parking"]["id"],
+                        }
+                    ],
+                },
+            },
+        )["write_request"]
+        expect(
+            client.post(
+                f"/api/v1/write-requests/{parking_wr['id']}/confirm"
+            ).status_code
+            == 200,
+            "parking return reminder confirm",
+        )
+        parking_item = next(
+            item
+            for item in client.get("/api/v1/items").json()
+            if item["title"] == "停车位置提醒"
+        )
+        expect(
+            parking_item["reminders"][0]["trigger_type"] == "return_to_place",
+            "parking reminder uses return_to_place",
+        )
 
         for pattern, weekdays in (
             ("daily", []),
