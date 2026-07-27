@@ -247,3 +247,56 @@ def test_write_request_can_create_time_reminder_for_existing_item() -> None:
         ]
 
     app.dependency_overrides.clear()
+
+
+def test_write_request_can_create_place_reminder_for_existing_item() -> None:
+    """Place reminder creation can target an existing saved place."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/items",
+            json={"type": "todo", "title": "取快递"},
+        )
+        assert created.status_code == 200
+        item_id = created.json()["item"]["id"]
+        place = client.post(
+            "/api/v1/places",
+            json={"label": "家", "place_type": "home", "radius_meters": 100},
+        )
+        assert place.status_code == 200
+        place_id = place.json()["place"]["id"]
+
+        request = client.post(
+            "/api/v1/write-requests",
+            json={
+                "source_command_id": f"manual-{item_id}-place-reminder",
+                "candidate_payload": {
+                    "operation": "create_reminder",
+                    "target_id": item_id,
+                    "item": {"title": "取快递", "type": "todo"},
+                    "reminders": [
+                        {
+                            "trigger_type": "enter_place",
+                            "place_id": place_id,
+                            "priority": "normal",
+                        }
+                    ],
+                },
+            },
+        )
+        assert request.status_code == 200
+        write_request_id = request.json()["write_request"]["id"]
+
+        confirmed = client.post(f"/api/v1/write-requests/{write_request_id}/confirm")
+        assert confirmed.status_code == 200
+
+        items = client.get("/api/v1/items").json()
+        reminder = items[0]["reminders"][0]
+        assert reminder["trigger_type"] == "enter_place"
+        assert reminder["place_id"] == place_id
+        assert reminder["status"] == "armed"
+
+    app.dependency_overrides.clear()

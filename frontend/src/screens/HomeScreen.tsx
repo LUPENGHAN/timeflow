@@ -47,6 +47,8 @@ type EditDraft = {
 
 type ReminderDraft = {
   trigger_at: string;
+  trigger_type: 'time' | 'enter_place' | 'leave_place' | 'return_to_place';
+  place_id: string;
   priority: 'low' | 'normal' | 'high';
 };
 
@@ -236,7 +238,7 @@ export function HomeScreen() {
 
   function handleOpenReminder(item: Item) {
     setReminderItem(item);
-    setReminderDraft(defaultReminderDraft());
+    setReminderDraft(defaultReminderDraft(places[0]?.id));
   }
 
   async function handlePrepareEditItem() {
@@ -304,9 +306,15 @@ export function HomeScreen() {
     setReminderBusy(true);
     setBanner(null);
     try {
-      const triggerAt = normalizeInputDateTime(reminderDraft.trigger_at);
-      if (!triggerAt) {
+      const triggerAt =
+        reminderDraft.trigger_type === 'time'
+          ? normalizeInputDateTime(reminderDraft.trigger_at)
+          : null;
+      if (reminderDraft.trigger_type === 'time' && !triggerAt) {
         throw new Error('invalid datetime');
+      }
+      if (reminderDraft.trigger_type !== 'time' && !reminderDraft.place_id) {
+        throw new Error('missing place');
       }
 
       await createWriteRequest({
@@ -319,9 +327,10 @@ export function HomeScreen() {
           operation: 'create_reminder',
           reminders: [
             {
+              place_id: reminderDraft.trigger_type === 'time' ? null : reminderDraft.place_id,
               priority: reminderDraft.priority,
               trigger_at: triggerAt,
-              trigger_type: 'time',
+              trigger_type: reminderDraft.trigger_type,
             },
           ],
           source_text: 'manual reminder',
@@ -335,7 +344,9 @@ export function HomeScreen() {
       setBanner(
         error instanceof Error && error.message === 'invalid datetime'
           ? '时间格式不正确'
-          : '创建确认请求失败',
+          : error instanceof Error && error.message === 'missing place'
+            ? '请先选择地点'
+            : '创建确认请求失败',
       );
     } finally {
       setReminderBusy(false);
@@ -732,6 +743,7 @@ export function HomeScreen() {
         onChangeDraft={setReminderDraft}
         onClose={() => setReminderItem(null)}
         onSubmit={handlePrepareReminder}
+        places={places}
         visible={reminderItem !== null}
       />
     </View>
@@ -1100,6 +1112,7 @@ function ReminderSheet({
   onChangeDraft,
   onClose,
   onSubmit,
+  places,
   visible,
 }: {
   busy: boolean;
@@ -1108,6 +1121,7 @@ function ReminderSheet({
   onChangeDraft: (value: ReminderDraft) => void;
   onClose: () => void;
   onSubmit: () => void;
+  places: Place[];
   visible: boolean;
 }) {
   return (
@@ -1125,13 +1139,73 @@ function ReminderSheet({
           </View>
 
           <View style={styles.sheetSection}>
-            <TextInput
-              onChangeText={(value) => onChangeDraft({ ...draft, trigger_at: value })}
-              placeholder="提醒时间"
-              placeholderTextColor={colors.muted}
-              style={styles.input}
-              value={draft.trigger_at}
-            />
+            <View style={styles.priorityRow}>
+              {(['time', 'enter_place', 'leave_place', 'return_to_place'] as const).map(
+                (triggerType) => (
+                  <Pressable
+                    key={triggerType}
+                    onPress={() =>
+                      onChangeDraft({
+                        ...draft,
+                        place_id:
+                          triggerType === 'time'
+                            ? draft.place_id
+                            : draft.place_id || places[0]?.id || '',
+                        trigger_type: triggerType,
+                      })
+                    }
+                    style={[
+                      styles.priorityButton,
+                      draft.trigger_type === triggerType && styles.priorityButtonActive,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.priorityButtonText,
+                        draft.trigger_type === triggerType && styles.priorityButtonTextActive,
+                      ]}
+                    >
+                      {triggerTypeLabel(triggerType)}
+                    </Text>
+                  </Pressable>
+                ),
+              )}
+            </View>
+            {draft.trigger_type === 'time' ? (
+              <TextInput
+                onChangeText={(value) => onChangeDraft({ ...draft, trigger_at: value })}
+                placeholder="提醒时间"
+                placeholderTextColor={colors.muted}
+                style={styles.input}
+                value={draft.trigger_at}
+              />
+            ) : (
+              <View style={styles.placePicker}>
+                {places.length === 0 ? (
+                  <Text style={styles.emptyText}>先在地点库保存一个地点。</Text>
+                ) : (
+                  places.map((place) => (
+                    <Pressable
+                      key={place.id}
+                      onPress={() => onChangeDraft({ ...draft, place_id: place.id })}
+                      style={[
+                        styles.placeChip,
+                        draft.place_id === place.id && styles.placeChipActive,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.placeChipText,
+                          draft.place_id === place.id && styles.placeChipTextActive,
+                        ]}
+                      >
+                        {place.label}
+                      </Text>
+                    </Pressable>
+                  ))
+                )}
+              </View>
+            )}
             <View style={styles.priorityRow}>
               {(['low', 'normal', 'high'] as const).map((priority) => (
                 <Pressable
@@ -1155,9 +1229,9 @@ function ReminderSheet({
             </View>
             <View style={styles.preview}>
               <Text style={styles.sectionTitle}>写入预览</Text>
-              <Text style={styles.previewTitle}>时间提醒</Text>
+              <Text style={styles.previewTitle}>{triggerTypeLabel(draft.trigger_type)}</Text>
               <Text style={styles.previewMeta}>
-                {draft.trigger_at || '未设置'} · {priorityLabel(draft.priority)}
+                {reminderDraftSummary(draft, places)} · {priorityLabel(draft.priority)}
               </Text>
             </View>
             <Pressable
@@ -1354,11 +1428,34 @@ function emptyEditDraft(): EditDraft {
   };
 }
 
-function defaultReminderDraft(): ReminderDraft {
+function defaultReminderDraft(placeId = ''): ReminderDraft {
   return {
+    place_id: placeId,
     priority: 'normal',
     trigger_at: toInputDateTime(new Date(Date.now() + 60 * 60 * 1000).toISOString()),
+    trigger_type: 'time',
   };
+}
+
+function triggerTypeLabel(triggerType: ReminderDraft['trigger_type']) {
+  if (triggerType === 'time') {
+    return '时间提醒';
+  }
+  if (triggerType === 'enter_place') {
+    return '到达地点';
+  }
+  if (triggerType === 'leave_place') {
+    return '离开地点';
+  }
+  return '回到地点';
+}
+
+function reminderDraftSummary(draft: ReminderDraft, places: Place[]) {
+  if (draft.trigger_type === 'time') {
+    return draft.trigger_at || '未设置';
+  }
+  const place = places.find((current) => current.id === draft.place_id);
+  return place ? place.label : '未选择地点';
 }
 
 function priorityLabel(priority: ReminderDraft['priority']) {
@@ -1655,6 +1752,33 @@ const styles = StyleSheet.create({
     flex: 1,
     gap: 2,
     minWidth: 0,
+  },
+  placeChip: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    minHeight: 36,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 6,
+  },
+  placeChipActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  placeChipText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  placeChipTextActive: {
+    color: colors.surface,
+  },
+  placePicker: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
   placeList: {
     gap: spacing.md,
