@@ -112,6 +112,13 @@ export function confirmWriteRequest(writeRequestId: string) {
   );
 }
 
+export function rejectWriteRequest(writeRequestId: string) {
+  return apiFetch<{ write_request: WriteRequest; events: EventMessage[] }>(
+    `/write-requests/${writeRequestId}/reject`,
+    { method: 'POST' },
+  );
+}
+
 export function listItems() {
   return apiFetch<Item[]>('/items');
 }

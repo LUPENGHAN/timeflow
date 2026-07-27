@@ -1,8 +1,17 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
-import { createItem, getHealth, listItems, type Item } from '../api/client';
+import {
+  confirmWriteRequest,
+  createItem,
+  createVoiceCommand,
+  getHealth,
+  listItems,
+  rejectWriteRequest,
+  type Item,
+  type VoiceCommandResult,
+} from '../api/client';
 import { colors, spacing } from '../constants/theme';
 
 type ViewMode = 'today' | 'week' | 'month';
@@ -17,6 +26,11 @@ export function HomeScreen() {
   const [description, setDescription] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState('到家后提醒我取快递');
+  const [voiceSubmitting, setVoiceSubmitting] = useState(false);
+  const [voiceResult, setVoiceResult] = useState<VoiceCommandResult | null>(null);
+  const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -95,6 +109,64 @@ export function HomeScreen() {
       setBanner('Create failed');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function refreshItems() {
+    const refreshed = await listItems();
+    setItems(refreshed);
+  }
+
+  async function handleSubmitVoice() {
+    if (!voiceTranscript.trim() || voiceSubmitting) {
+      return;
+    }
+
+    setVoiceSubmitting(true);
+    setVoiceStatus(null);
+    try {
+      const result = await createVoiceCommand(voiceTranscript.trim());
+      setVoiceResult(result);
+      setVoiceStatus(result.write_request ? 'Write request created' : 'No write requested');
+    } catch {
+      setVoiceStatus('Voice command failed');
+    } finally {
+      setVoiceSubmitting(false);
+    }
+  }
+
+  async function handleConfirmVoice() {
+    const writeRequestId = voiceResult?.write_request?.id;
+    if (!writeRequestId || voiceSubmitting) {
+      return;
+    }
+
+    setVoiceSubmitting(true);
+    try {
+      await confirmWriteRequest(writeRequestId);
+      await refreshItems();
+      setVoiceStatus('Write request applied');
+    } catch {
+      setVoiceStatus('Confirm failed');
+    } finally {
+      setVoiceSubmitting(false);
+    }
+  }
+
+  async function handleRejectVoice() {
+    const writeRequestId = voiceResult?.write_request?.id;
+    if (!writeRequestId || voiceSubmitting) {
+      return;
+    }
+
+    setVoiceSubmitting(true);
+    try {
+      await rejectWriteRequest(writeRequestId);
+      setVoiceStatus('Write request cancelled');
+    } catch {
+      setVoiceStatus('Cancel failed');
+    } finally {
+      setVoiceSubmitting(false);
     }
   }
 
@@ -237,7 +309,94 @@ export function HomeScreen() {
         </View>
       </ScrollView>
 
-      <Pressable style={styles.voiceButton}>
+      <Modal animationType="slide" visible={voiceOpen}>
+        <View style={styles.modalRoot}>
+          <ScrollView contentContainerStyle={styles.modalContent}>
+            <View style={styles.header}>
+              <View>
+                <Text style={styles.eyebrow}>Mock voice</Text>
+                <Text style={styles.sectionTitle}>Voice command</Text>
+              </View>
+              <Pressable
+                onPress={() => {
+                  setVoiceOpen(false);
+                }}
+                style={styles.secondaryButton}
+              >
+                <Text style={styles.secondaryButtonText}>Close</Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.voiceCard}>
+              <Text style={styles.confirmationLabel}>RecordingCard</Text>
+              <TextInput
+                value={voiceTranscript}
+                onChangeText={setVoiceTranscript}
+                placeholder="Speak or type a mock transcript"
+                placeholderTextColor={colors.muted}
+                multiline
+                style={styles.textArea}
+              />
+              <Pressable
+                onPress={handleSubmitVoice}
+                style={[styles.primaryButton, voiceSubmitting && styles.primaryButtonDisabled]}
+              >
+                <Text style={styles.primaryButtonText}>
+                  {voiceSubmitting ? 'Parsing' : 'Send mock voice'}
+                </Text>
+              </Pressable>
+            </View>
+
+            <View style={styles.voiceCard}>
+              <Text style={styles.confirmationLabel}>TranscriptCard</Text>
+              <Text style={styles.cardText}>{voiceTranscript || 'No transcript yet'}</Text>
+            </View>
+
+            {voiceResult?.clarification ? (
+              <View style={styles.voiceCard}>
+                <Text style={styles.confirmationLabel}>ClarificationCard</Text>
+                <Text style={styles.cardText}>{voiceResult.clarification}</Text>
+              </View>
+            ) : null}
+
+            {voiceResult?.write_request ? (
+              <View style={styles.voiceCard}>
+                <Text style={styles.confirmationLabel}>CandidateListCard</Text>
+                <Text style={styles.cardText}>
+                  {String(voiceResult.write_request.candidate_payload.operation ?? 'pending')}
+                </Text>
+              </View>
+            ) : null}
+
+            {voiceResult?.write_request ? (
+              <View style={styles.voiceCard}>
+                <Text style={styles.confirmationLabel}>WriteRequestPreviewCard</Text>
+                <Text style={styles.codeText}>
+                  {JSON.stringify(voiceResult.write_request.candidate_payload, null, 2)}
+                </Text>
+                <View style={styles.actions}>
+                  <Pressable onPress={handleRejectVoice} style={styles.secondaryButton}>
+                    <Text style={styles.secondaryButtonText}>Cancel</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={handleConfirmVoice}
+                    style={[styles.primaryButton, voiceSubmitting && styles.primaryButtonDisabled]}
+                  >
+                    <Text style={styles.primaryButtonText}>Confirm</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ) : null}
+
+            <View style={styles.voiceCard}>
+              <Text style={styles.confirmationLabel}>ResultCard</Text>
+              <Text style={styles.cardText}>{voiceStatus ?? 'Waiting for voice input'}</Text>
+            </View>
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Pressable onPress={() => setVoiceOpen(true)} style={styles.voiceButton}>
         <Text style={styles.voiceButtonText}>Voice</Text>
       </Pressable>
     </View>
@@ -263,6 +422,19 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     height: 22,
     width: 22,
+  },
+  cardText: {
+    color: colors.text,
+    fontSize: 15,
+    marginTop: spacing.sm,
+  },
+  codeText: {
+    backgroundColor: colors.background,
+    borderRadius: 8,
+    color: colors.text,
+    fontSize: 12,
+    marginTop: spacing.sm,
+    padding: spacing.sm,
   },
   confirmation: {
     backgroundColor: colors.surface,
@@ -336,6 +508,16 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 16,
     fontWeight: '600',
+  },
+  modalContent: {
+    gap: spacing.md,
+    padding: spacing.lg,
+    paddingBottom: spacing.xl,
+    paddingTop: 64,
+  },
+  modalRoot: {
+    backgroundColor: colors.background,
+    flex: 1,
   },
   primaryButton: {
     alignItems: 'center',
@@ -478,5 +660,25 @@ const styles = StyleSheet.create({
     color: colors.surface,
     fontSize: 14,
     fontWeight: '700',
+  },
+  voiceCard: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: spacing.sm,
+    padding: spacing.md,
+  },
+  textArea: {
+    backgroundColor: colors.background,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: 15,
+    minHeight: 96,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    textAlignVertical: 'top',
   },
 });
