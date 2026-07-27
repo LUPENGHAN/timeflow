@@ -39,6 +39,11 @@ type EditDraft = {
   place_text: string;
 };
 
+type ReminderDraft = {
+  trigger_at: string;
+  priority: 'low' | 'normal' | 'high';
+};
+
 export function HomeScreen() {
   const [connection, setConnection] = useState<ConnectionState>('checking');
   const [socketState, setSocketState] = useState<SocketState>('connecting');
@@ -57,6 +62,9 @@ export function HomeScreen() {
   const [editItem, setEditItem] = useState<Item | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft>(emptyEditDraft());
   const [editBusy, setEditBusy] = useState(false);
+  const [reminderItem, setReminderItem] = useState<Item | null>(null);
+  const [reminderDraft, setReminderDraft] = useState<ReminderDraft>(defaultReminderDraft());
+  const [reminderBusy, setReminderBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     const [itemResponse, pendingResponse] = await Promise.all([
@@ -210,6 +218,11 @@ export function HomeScreen() {
     });
   }
 
+  function handleOpenReminder(item: Item) {
+    setReminderItem(item);
+    setReminderDraft(defaultReminderDraft());
+  }
+
   async function handlePrepareEditItem() {
     if (!editItem || !editDraft.title.trim() || editBusy) {
       return;
@@ -264,6 +277,52 @@ export function HomeScreen() {
       );
     } finally {
       setEditBusy(false);
+    }
+  }
+
+  async function handlePrepareReminder() {
+    if (!reminderItem || reminderBusy) {
+      return;
+    }
+
+    setReminderBusy(true);
+    setBanner(null);
+    try {
+      const triggerAt = normalizeInputDateTime(reminderDraft.trigger_at);
+      if (!triggerAt) {
+        throw new Error('invalid datetime');
+      }
+
+      await createWriteRequest({
+        source_command_id: `manual-reminder-${reminderItem.id}-${Date.now()}`,
+        candidate_payload: {
+          item: {
+            title: reminderItem.title,
+            type: reminderItem.type,
+          },
+          operation: 'create_reminder',
+          reminders: [
+            {
+              priority: reminderDraft.priority,
+              trigger_at: triggerAt,
+              trigger_type: 'time',
+            },
+          ],
+          source_text: 'manual reminder',
+          target_id: reminderItem.id,
+        },
+      });
+      setReminderItem(null);
+      await refresh();
+      setBanner('已生成待确认写入');
+    } catch (error) {
+      setBanner(
+        error instanceof Error && error.message === 'invalid datetime'
+          ? '时间格式不正确'
+          : '创建确认请求失败',
+      );
+    } finally {
+      setReminderBusy(false);
     }
   }
 
@@ -462,6 +521,7 @@ export function HomeScreen() {
                 item={item}
                 onEdit={handleOpenEdit}
                 onPrepareOperation={handlePrepareItemOperation}
+                onRemind={handleOpenReminder}
               />
             ))
           )}
@@ -492,6 +552,16 @@ export function HomeScreen() {
         onChangeDraft={setEditDraft}
         onSubmit={handlePrepareEditItem}
         visible={editItem !== null}
+      />
+
+      <ReminderSheet
+        busy={reminderBusy}
+        draft={reminderDraft}
+        item={reminderItem}
+        onChangeDraft={setReminderDraft}
+        onClose={() => setReminderItem(null)}
+        onSubmit={handlePrepareReminder}
+        visible={reminderItem !== null}
       />
     </View>
   );
@@ -527,10 +597,12 @@ function ItemRow({
   item,
   onEdit,
   onPrepareOperation,
+  onRemind,
 }: {
   item: Item;
   onEdit: (item: Item) => void;
   onPrepareOperation: (item: Item, operation: ManualOperation) => void;
+  onRemind: (item: Item) => void;
 }) {
   const completed = item.status === 'completed';
   return (
@@ -560,6 +632,9 @@ function ItemRow({
       <View style={styles.rowActions}>
         <Pressable onPress={() => onEdit(item)} style={styles.smallButton}>
           <Text style={styles.smallButtonText}>编辑</Text>
+        </Pressable>
+        <Pressable onPress={() => onRemind(item)} style={styles.smallButton}>
+          <Text style={styles.smallButtonText}>提醒</Text>
         </Pressable>
         {item.type === 'todo' ? (
           <Pressable
@@ -800,6 +875,86 @@ function EditSheet({
   );
 }
 
+function ReminderSheet({
+  busy,
+  draft,
+  item,
+  onChangeDraft,
+  onClose,
+  onSubmit,
+  visible,
+}: {
+  busy: boolean;
+  draft: ReminderDraft;
+  item: Item | null;
+  onChangeDraft: (value: ReminderDraft) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+  visible: boolean;
+}) {
+  return (
+    <Modal animationType="slide" visible={visible}>
+      <View style={styles.modalRoot}>
+        <ScrollView contentContainerStyle={styles.modalContent}>
+          <View style={styles.topBar}>
+            <View>
+              <Text style={styles.kicker}>添加提醒</Text>
+              <Text style={styles.title}>{item?.title ?? '事项'}</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>关闭</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.sheetSection}>
+            <TextInput
+              onChangeText={(value) => onChangeDraft({ ...draft, trigger_at: value })}
+              placeholder="提醒时间"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              value={draft.trigger_at}
+            />
+            <View style={styles.priorityRow}>
+              {(['low', 'normal', 'high'] as const).map((priority) => (
+                <Pressable
+                  key={priority}
+                  onPress={() => onChangeDraft({ ...draft, priority })}
+                  style={[
+                    styles.priorityButton,
+                    draft.priority === priority && styles.priorityButtonActive,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.priorityButtonText,
+                      draft.priority === priority && styles.priorityButtonTextActive,
+                    ]}
+                  >
+                    {priorityLabel(priority)}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <View style={styles.preview}>
+              <Text style={styles.sectionTitle}>写入预览</Text>
+              <Text style={styles.previewTitle}>时间提醒</Text>
+              <Text style={styles.previewMeta}>
+                {draft.trigger_at || '未设置'} · {priorityLabel(draft.priority)}
+              </Text>
+            </View>
+            <Pressable
+              onPress={onSubmit}
+              style={[styles.primaryButton, busy && styles.disabledButton]}
+            >
+              <Text style={styles.primaryButtonText}>{busy ? '生成中' : '生成确认'}</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
 function itemSummary(item: Item) {
   if (item.start_at) {
     return `开始 ${formatDate(item.start_at)}${item.place_text ? ` · ${item.place_text}` : ''}`;
@@ -854,6 +1009,9 @@ function manualOperationLabel(operation: string) {
   if (operation === 'update_item') {
     return '编辑事项';
   }
+  if (operation === 'create_reminder') {
+    return '新增提醒';
+  }
   if (operation === 'complete_item') {
     return '完成待办';
   }
@@ -891,6 +1049,23 @@ function emptyEditDraft(): EditDraft {
     start_at: '',
     title: '',
   };
+}
+
+function defaultReminderDraft(): ReminderDraft {
+  return {
+    priority: 'normal',
+    trigger_at: toInputDateTime(new Date(Date.now() + 60 * 60 * 1000).toISOString()),
+  };
+}
+
+function priorityLabel(priority: ReminderDraft['priority']) {
+  if (priority === 'low') {
+    return '低';
+  }
+  if (priority === 'high') {
+    return '高';
+  }
+  return '普通';
 }
 
 function toInputDateTime(value: string | null) {
@@ -1103,6 +1278,31 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '900',
     marginTop: spacing.sm,
+  },
+  priorityButton: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 40,
+  },
+  priorityButtonActive: {
+    backgroundColor: colors.text,
+    borderColor: colors.text,
+  },
+  priorityButtonText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  priorityButtonTextActive: {
+    color: colors.surface,
+  },
+  priorityRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
   pendingRow: {
     alignItems: 'center',

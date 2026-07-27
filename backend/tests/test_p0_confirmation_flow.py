@@ -189,3 +189,61 @@ def test_write_request_can_update_item_fields_and_clear_nullable_values() -> Non
         assert items[0]["place_text"] is None
 
     app.dependency_overrides.clear()
+
+
+def test_write_request_can_create_time_reminder_for_existing_item() -> None:
+    """Reminder creation for an existing item also stops at confirmation."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/items",
+            json={"type": "todo", "title": "交材料"},
+        )
+        assert created.status_code == 200
+        item_id = created.json()["item"]["id"]
+        trigger_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+
+        request = client.post(
+            "/api/v1/write-requests",
+            json={
+                "source_command_id": f"manual-{item_id}-reminder",
+                "candidate_payload": {
+                    "operation": "create_reminder",
+                    "target_id": item_id,
+                    "item": {"title": "交材料", "type": "todo"},
+                    "reminders": [
+                        {
+                            "trigger_type": "time",
+                            "trigger_at": trigger_at,
+                            "priority": "normal",
+                        }
+                    ],
+                },
+            },
+        )
+        assert request.status_code == 200
+        write_request_id = request.json()["write_request"]["id"]
+
+        before_confirmation = client.get("/api/v1/items").json()
+        assert before_confirmation[0]["reminders"] == []
+
+        confirmed = client.post(f"/api/v1/write-requests/{write_request_id}/confirm")
+        assert confirmed.status_code == 200
+
+        items = client.get("/api/v1/items").json()
+        assert items[0]["reminders"][0]["trigger_type"] == "time"
+        assert items[0]["reminders"][0]["status"] == "pending"
+
+        events = client.get("/api/v1/events").json()["events"]
+        event_types = [event["event_type"] for event in events]
+        assert event_types == [
+            "item.created",
+            "write_request.created",
+            "write_request.updated",
+            "write_request.applied",
+        ]
+
+    app.dependency_overrides.clear()

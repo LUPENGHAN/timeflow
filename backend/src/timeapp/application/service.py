@@ -233,6 +233,7 @@ class TimeflowApplication:
             "complete_item",
             "cancel_complete_item",
             "delete_item",
+            "create_reminder",
         }:
             self.store.add_events([applied_event])
         else:
@@ -854,6 +855,9 @@ class TimeflowApplication:
             events.extend(self.reminder.apply(write_request, self.store, item_id))
             return events
 
+        if operation == "create_reminder":
+            return self._apply_reminder_operations(write_request)
+
         if operation == "update_item":
             return self._apply_item_operations(write_request, "update")
 
@@ -914,6 +918,37 @@ class TimeflowApplication:
             else:
                 _, item_events = self.delete_item(write_request.identity, target_id)
             events.extend(item_events)
+
+        return events
+
+    def _apply_reminder_operations(self, write_request: WriteRequest) -> list[DomainEvent]:
+        target_id = self._optional_str(write_request.candidate_payload.get("target_id"))
+        if target_id is None:
+            raise ApplicationError(
+                ErrorCode.MISSING_REQUIRED_FIELD,
+                "Reminder target item is missing.",
+            )
+
+        reminder_payloads = write_request.candidate_payload.get("reminders", [])
+        if not isinstance(reminder_payloads, list) or not reminder_payloads:
+            reminder_payloads = [write_request.candidate_payload.get("reminder", {})]
+
+        events: list[DomainEvent] = []
+        for payload in reminder_payloads:
+            if not isinstance(payload, dict):
+                continue
+            trigger_type = ReminderTriggerType(str(payload.get("trigger_type", "time")))
+            priority = ReminderPriority(str(payload.get("priority", "normal")))
+            _, reminder_events = self.create_reminder(
+                identity=write_request.identity,
+                item_id=target_id,
+                trigger_type=trigger_type,
+                trigger_at=self._optional_datetime(payload.get("trigger_at")),
+                place_id=self._optional_str(payload.get("place_id"))
+                or self._optional_str(payload.get("place_ref")),
+                priority=priority,
+            )
+            events.extend(reminder_events)
 
         return events
 
