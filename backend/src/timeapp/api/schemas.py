@@ -187,6 +187,14 @@ class ReminderResponse(BaseModel):
     priority: str
     delivery_channel: str
     status: str
+    snooze_count: int
+    local_notification_id: str | None
+    local_registration_status: str
+    failed_reason: str | None
+    fallback_status: str
+    fallback_after_seconds: int
+    fallback_requested_at: datetime | None
+    version: int
 
     @classmethod
     def from_domain(cls, reminder: Reminder) -> ReminderResponse:
@@ -199,7 +207,32 @@ class ReminderResponse(BaseModel):
             priority=reminder.priority.value,
             delivery_channel=reminder.delivery_channel.value,
             status=reminder.status.value,
+            snooze_count=reminder.snooze_count,
+            local_notification_id=reminder.local_notification_id,
+            local_registration_status=reminder.local_registration_status.value,
+            failed_reason=reminder.failed_reason,
+            fallback_status=reminder.fallback_status.value,
+            fallback_after_seconds=reminder.fallback_after_seconds,
+            fallback_requested_at=reminder.fallback_requested_at,
+            version=reminder.version,
         )
+
+
+class ReminderActionRequest(BaseModel):
+    """Client reminder action callback."""
+
+    action: str
+    failed_reason: str | None = None
+    local_notification_id: str | None = None
+    snooze_minutes: int = 10
+    fallback_after_seconds: int = 300
+
+
+class ReminderActionResponse(BaseModel):
+    """Reminder action response with emitted events."""
+
+    reminder: ReminderResponse
+    events: list[EventResponse]
 
 
 class PlaceResponse(BaseModel):

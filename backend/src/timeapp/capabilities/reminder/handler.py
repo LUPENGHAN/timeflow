@@ -8,6 +8,7 @@ from timeapp.application.store import InMemoryStore
 from timeapp.domain.enums import (
     DomainEventType,
     ReminderPriority,
+    ReminderStatus,
     ReminderTriggerType,
 )
 from timeapp.domain.models import DomainEvent, Reminder, WriteRequest, utc_now
@@ -43,14 +44,20 @@ class ReminderCapability:
                 priority=ReminderPriority(
                     str(write_request.candidate_payload["item"].get("priority", "normal"))
                 ),
+                status=ReminderStatus.PENDING
+                if trigger_type == ReminderTriggerType.TIME
+                else ReminderStatus.ARMED,
             )
             store.add_reminder(reminder)
+            event_type = (
+                DomainEventType.WRITE_REQUEST_UPDATED
+                if trigger_type == ReminderTriggerType.TIME
+                else DomainEventType.REMINDER_ARMED
+            )
             events.append(
                 DomainEvent(
                     id=str(uuid4()),
-                    event_type=DomainEventType.REMINDER_ARMED
-                    if trigger_type == ReminderTriggerType.RETURN_TO_PLACE
-                    else DomainEventType.WRITE_REQUEST_UPDATED,
+                    event_type=event_type,
                     aggregate_type="reminder",
                     aggregate_id=reminder.id,
                     version=len(store.events) + len(events) + 1,

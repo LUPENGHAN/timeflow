@@ -11,8 +11,10 @@ from timeapp.domain.enums import (
     CommandEntity,
     DeliveryChannel,
     DomainEventType,
+    FallbackStatus,
     ItemStatus,
     ItemType,
+    NotificationRegistrationStatus,
     ReminderPriority,
     ReminderStatus,
     ReminderTriggerType,
@@ -173,8 +175,14 @@ class Reminder:
     snooze_count: int = 0
     last_triggered_at: datetime | None = None
     local_notification_id: str | None = None
+    local_registration_status: NotificationRegistrationStatus = (
+        NotificationRegistrationStatus.PENDING
+    )
     expires_at: datetime | None = None
     failed_reason: str | None = None
+    fallback_status: FallbackStatus = FallbackStatus.NOT_REQUIRED
+    fallback_after_seconds: int = 300
+    fallback_requested_at: datetime | None = None
     version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)

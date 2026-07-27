@@ -115,6 +115,24 @@ class InMemoryStore:
         with self._lock:
             self.reminders[reminder.id] = reminder
 
+    def get_reminder(self, reminder_id: str) -> Reminder | None:
+        """Load a reminder by id."""
+
+        with self._lock:
+            return self.reminders.get(reminder_id)
+
+    def update_reminder(self, reminder: Reminder) -> None:
+        """Persist an updated reminder."""
+
+        with self._lock:
+            self.reminders[reminder.id] = reminder
+
+    def list_reminders(self, user_id: str) -> list[Reminder]:
+        """Return reminders for a user."""
+
+        with self._lock:
+            return [reminder for reminder in self.reminders.values() if reminder.user_id == user_id]
+
     def add_events(self, events: list[DomainEvent]) -> None:
         """Append domain events in order."""
 

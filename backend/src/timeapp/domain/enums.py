@@ -97,6 +97,24 @@ class DeliveryChannel(StrEnum):
     LOCAL_NOTIFICATION = "local_notification"
 
 
+class NotificationRegistrationStatus(StrEnum):
+    """Client local-notification registration state."""
+
+    PENDING = "pending"
+    REGISTERED = "registered"
+    FAILED = "failed"
+    UNAVAILABLE = "unavailable"
+
+
+class FallbackStatus(StrEnum):
+    """Cloud fallback state; P0 records requests without real delivery."""
+
+    NOT_REQUIRED = "not_required"
+    REQUESTED = "requested"
+    SENT = "sent"
+    FAILED = "failed"
+
+
 class DomainEventType(StrEnum):
     """Domain and realtime event names shared with WebSocket clients."""
 
@@ -116,4 +134,6 @@ class DomainEventType(StrEnum):
     REMINDER_CANCELLED = "reminder.cancelled"
     REMINDER_EXPIRED = "reminder.expired"
     REMINDER_FAILED = "reminder.failed"
+    NOTIFICATION_REGISTRATION_FAILED = "notification.registration.failed"
+    NOTIFICATION_FALLBACK_REQUESTED = "notification.fallback.requested"
     SYNC_RESPONSE = "sync.response"

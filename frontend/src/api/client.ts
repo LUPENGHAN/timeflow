@@ -63,6 +63,14 @@ export type Item = {
     priority: string;
     delivery_channel: string;
     status: string;
+    snooze_count: number;
+    local_notification_id: string | null;
+    local_registration_status: string;
+    failed_reason: string | null;
+    fallback_status: string;
+    fallback_after_seconds: number;
+    fallback_requested_at: string | null;
+    version: number;
   }[];
 };
 
@@ -141,6 +149,34 @@ export function createWriteRequest(input: {
 
 export function listItems() {
   return apiFetch<Item[]>('/items');
+}
+
+export function applyReminderAction(
+  reminderId: string,
+  input: {
+    action:
+      | 'registered'
+      | 'delivered'
+      | 'failed'
+      | 'registration_failed'
+      | 'local_unavailable'
+      | 'snooze'
+      | 'dismiss'
+      | 'cancel';
+    failed_reason?: string | null;
+    local_notification_id?: string | null;
+    snooze_minutes?: number;
+    fallback_after_seconds?: number;
+  },
+) {
+  return apiFetch<{ reminder: Reminder; events: EventMessage[] }>(
+    `/reminders/${reminderId}/actions`,
+    {
+      body: JSON.stringify(input),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    },
+  );
 }
 
 export function listPlaces() {

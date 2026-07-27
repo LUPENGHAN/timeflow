@@ -19,8 +19,11 @@ from timeapp.domain.enums import (
     CommandAction,
     CommandEntity,
     DomainEventType,
+    FallbackStatus,
     ItemStatus,
     ItemType,
+    NotificationRegistrationStatus,
+    ReminderStatus,
     VoiceCommandStatus,
     WriteRequestStatus,
 )
@@ -31,6 +34,7 @@ from timeapp.domain.models import (
     Identity,
     Item,
     Place,
+    Reminder,
     RepeatRule,
     VoiceCommand,
     WriteRequest,
@@ -228,6 +232,11 @@ class TimeflowApplication:
 
         return self.store.list_repeat_rules(identity.user_id)
 
+    def list_reminders(self, identity: Identity) -> list[Reminder]:
+        """List reminders for a user."""
+
+        return self.store.list_reminders(identity.user_id)
+
     def create_item(
         self,
         identity: Identity,
@@ -417,6 +426,96 @@ class TimeflowApplication:
         """Mark an item as completed."""
 
         return self.update_item(identity, item_id, status=ItemStatus.COMPLETED)
+
+    def apply_reminder_action(
+        self,
+        identity: Identity,
+        reminder_id: str,
+        action: str,
+        failed_reason: str | None = None,
+        local_notification_id: str | None = None,
+        snooze_minutes: int = 10,
+        fallback_after_seconds: int = 300,
+    ) -> tuple[Reminder, list[DomainEvent]]:
+        """Apply a client reminder action and emit sync/fallback events."""
+
+        reminder = self.store.get_reminder(reminder_id)
+        if reminder is None or reminder.user_id != identity.user_id:
+            raise ApplicationError(
+                ErrorCode.REMINDER_NOT_FOUND,
+                f"Reminder {reminder_id} was not found.",
+            )
+
+        now = datetime.now(UTC)
+        event_type = DomainEventType.WRITE_REQUEST_UPDATED
+
+        if action == "registered":
+            reminder.local_registration_status = NotificationRegistrationStatus.REGISTERED
+            reminder.local_notification_id = local_notification_id
+        elif action == "delivered":
+            reminder.status = ReminderStatus.DELIVERED
+            reminder.last_triggered_at = now
+            event_type = DomainEventType.REMINDER_DELIVERED
+        elif action == "dismiss":
+            reminder.status = ReminderStatus.DISMISSED
+            event_type = DomainEventType.REMINDER_DISMISSED
+        elif action == "snooze":
+            reminder.status = ReminderStatus.SNOOZED
+            reminder.snooze_count += 1
+            reminder.trigger_at = now + timedelta(minutes=snooze_minutes)
+            event_type = DomainEventType.REMINDER_SNOOZED
+        elif action == "cancel":
+            reminder.status = ReminderStatus.CANCELLED
+            reminder.cancelled_at = now
+            event_type = DomainEventType.REMINDER_CANCELLED
+        elif action in {"failed", "registration_failed", "local_unavailable"}:
+            reminder.status = ReminderStatus.FAILED
+            reminder.failed_reason = failed_reason or action
+            reminder.local_registration_status = (
+                NotificationRegistrationStatus.UNAVAILABLE
+                if action == "local_unavailable"
+                else NotificationRegistrationStatus.FAILED
+            )
+            reminder.fallback_status = FallbackStatus.REQUESTED
+            reminder.fallback_after_seconds = fallback_after_seconds
+            reminder.fallback_requested_at = now
+            event_type = (
+                DomainEventType.NOTIFICATION_REGISTRATION_FAILED
+                if action == "registration_failed"
+                else DomainEventType.REMINDER_FAILED
+            )
+        else:
+            raise ApplicationError(
+                ErrorCode.UNKNOWN_ACTION,
+                f"Unsupported reminder action {action}.",
+            )
+
+        reminder.version += 1
+        reminder.updated_at = now
+        self.store.update_reminder(reminder)
+        events = [
+            self._event(
+                event_type,
+                "reminder",
+                reminder.id,
+                {"reminder": self._reminder_payload(reminder)},
+            )
+        ]
+        if reminder.fallback_status == FallbackStatus.REQUESTED:
+            events.append(
+                self._event(
+                    DomainEventType.NOTIFICATION_FALLBACK_REQUESTED,
+                    "reminder",
+                    reminder.id,
+                    {
+                        "reminder_id": reminder.id,
+                        "fallback_after_seconds": reminder.fallback_after_seconds,
+                        "failed_reason": reminder.failed_reason,
+                    },
+                )
+            )
+        self.store.add_events(events)
+        return reminder, events
 
     def list_events(self, after_cursor: int = 0) -> list[DomainEvent]:
         """List domain events after a cursor."""
@@ -645,4 +744,26 @@ class TimeflowApplication:
             "place_text": item.place_text,
             "status": item.status.value,
             "version": item.version,
+        }
+
+    def _reminder_payload(self, reminder: Reminder) -> dict[str, Any]:
+        return {
+            "id": reminder.id,
+            "item_id": reminder.item_id,
+            "trigger_type": reminder.trigger_type.value,
+            "trigger_at": reminder.trigger_at.isoformat() if reminder.trigger_at else None,
+            "place_id": reminder.place_id,
+            "priority": reminder.priority.value,
+            "delivery_channel": reminder.delivery_channel.value,
+            "status": reminder.status.value,
+            "snooze_count": reminder.snooze_count,
+            "local_notification_id": reminder.local_notification_id,
+            "local_registration_status": reminder.local_registration_status.value,
+            "failed_reason": reminder.failed_reason,
+            "fallback_status": reminder.fallback_status.value,
+            "fallback_after_seconds": reminder.fallback_after_seconds,
+            "fallback_requested_at": reminder.fallback_requested_at.isoformat()
+            if reminder.fallback_requested_at
+            else None,
+            "version": reminder.version,
         }

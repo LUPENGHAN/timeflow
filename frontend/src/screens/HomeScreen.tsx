@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
+  applyReminderAction,
   confirmWriteRequest,
   createItem,
   createPlace,
@@ -16,6 +17,7 @@ import {
   rejectWriteRequest,
   type Item,
   type Place,
+  type Reminder,
   type RepeatRule,
   type VoiceCommandResult,
 } from '../api/client';
@@ -198,6 +200,23 @@ export function HomeScreen() {
     }
   }
 
+  async function handleReminderAction(
+    reminder: Reminder,
+    action: 'delivered' | 'failed' | 'snooze' | 'dismiss' | 'cancel',
+  ) {
+    try {
+      await applyReminderAction(reminder.id, {
+        action,
+        failed_reason: action === 'failed' ? 'local notification failed' : null,
+        snooze_minutes: 10,
+      });
+      await refreshItems();
+      setBanner(`Reminder ${action}`);
+    } catch {
+      setBanner('Reminder action failed');
+    }
+  }
+
   async function handlePrepareItemAction(item: Item, operation: 'complete_item' | 'delete_item') {
     const label = operation === 'complete_item' ? 'Complete item' : 'Delete item';
     setBanner(null);
@@ -318,6 +337,42 @@ export function HomeScreen() {
     } catch {
       setBanner('Cancel failed');
     }
+  }
+
+  function renderReminderBadges(item: Item) {
+    if (item.reminders.length === 0) {
+      return null;
+    }
+
+    return (
+      <View style={styles.badgeRow}>
+        {item.reminders.map((reminder) => (
+          <View key={reminder.id} style={styles.reminderGroup}>
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>
+                {reminder.trigger_type} · {reminder.status}
+              </Text>
+            </View>
+            <View style={styles.reminderActions}>
+              {(['delivered', 'failed', 'snooze', 'dismiss', 'cancel'] as const).map((action) => (
+                <Pressable
+                  key={action}
+                  onPress={() => {
+                    void handleReminderAction(reminder, action);
+                  }}
+                  style={styles.inlineActionButton}
+                >
+                  <Text style={styles.inlineActionText}>{action}</Text>
+                </Pressable>
+              ))}
+            </View>
+            {reminder.fallback_status === 'requested' ? (
+              <Text style={styles.itemMeta}>Fallback requested</Text>
+            ) : null}
+          </View>
+        ))}
+      </View>
+    );
   }
 
   return (
@@ -509,13 +564,7 @@ export function HomeScreen() {
                 <View style={styles.rowBody}>
                   <Text style={styles.itemTitle}>{item.title}</Text>
                   <Text style={styles.itemMeta}>{item.description ?? 'Calendar'}</Text>
-                  <View style={styles.badgeRow}>
-                    {item.reminders.map((reminder) => (
-                      <View key={reminder.id} style={styles.badge}>
-                        <Text style={styles.badgeText}>{reminder.trigger_type}</Text>
-                      </View>
-                    ))}
-                  </View>
+                  {renderReminderBadges(item)}
                 </View>
                 <View style={styles.inlineActions}>
                   <Pressable
@@ -544,13 +593,7 @@ export function HomeScreen() {
                 <View style={styles.rowBody}>
                   <Text style={styles.itemTitle}>{todo.title}</Text>
                   <Text style={styles.itemMeta}>{todo.description ?? 'Normal'}</Text>
-                  <View style={styles.badgeRow}>
-                    {todo.reminders.map((reminder) => (
-                      <View key={reminder.id} style={styles.badge}>
-                        <Text style={styles.badgeText}>{reminder.trigger_type}</Text>
-                      </View>
-                    ))}
-                  </View>
+                  {renderReminderBadges(todo)}
                 </View>
                 <View style={styles.inlineActions}>
                   <Pressable
@@ -880,6 +923,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  reminderActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  reminderGroup: {
+    gap: spacing.xs,
+    width: '100%',
   },
   root: {
     backgroundColor: colors.background,

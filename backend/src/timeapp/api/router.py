@@ -8,6 +8,7 @@ from timeapp.api.health import router as health_router
 from timeapp.api.items import router as items_router
 from timeapp.api.places import router as places_router
 from timeapp.api.realtime import router as realtime_router
+from timeapp.api.reminders import router as reminders_router
 from timeapp.api.repeat_rules import router as repeat_rules_router
 from timeapp.api.voice import router as voice_router
 from timeapp.api.write_requests import router as write_requests_router
@@ -22,6 +23,7 @@ api_router.include_router(write_requests_router)
 api_router.include_router(items_router)
 api_router.include_router(places_router)
 api_router.include_router(repeat_rules_router)
+api_router.include_router(reminders_router)
 api_router.include_router(events_router)
 api_router.include_router(realtime_router)
 api_router.include_router(identity_router)
