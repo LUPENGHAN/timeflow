@@ -3,12 +3,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
-  cancelCompleteItem,
-  completeItem,
   confirmWriteRequest,
-  createItem,
+  createWriteRequest,
   createVoiceCommand,
-  deleteItem,
   getHealth,
   getRealtimeUrl,
   listItems,
@@ -25,6 +22,12 @@ type ViewMode = 'today' | 'week' | 'month';
 type ItemType = 'todo' | 'calendar_event';
 type ConnectionState = 'checking' | 'online' | 'offline';
 type SocketState = 'connecting' | 'connected' | 'closed';
+type ManualOperation =
+  | 'create_todo'
+  | 'create_calendar_event'
+  | 'complete_item'
+  | 'cancel_complete_item'
+  | 'delete_item';
 
 export function HomeScreen() {
   const [connection, setConnection] = useState<ConnectionState>('checking');
@@ -111,7 +114,7 @@ export function HomeScreen() {
   const todoItems = useMemo(() => items.filter((item) => item.type === 'todo'), [items]);
   const visibleItems = viewMode === 'today' ? items : items;
 
-  async function handleCreateItem() {
+  async function handlePrepareCreateItem() {
     if (!title.trim() || loading) {
       return;
     }
@@ -119,44 +122,78 @@ export function HomeScreen() {
     setLoading(true);
     setBanner(null);
     try {
-      await createItem({
-        description: description.trim() || null,
-        title: title.trim(),
-        type: itemType,
+      await createWriteRequest({
+        source_command_id: `manual-create-${Date.now()}`,
+        candidate_payload: {
+          item: {
+            description: description.trim() || null,
+            due_at: null,
+            end_at: null,
+            place_text: null,
+            priority: 'normal',
+            start_at: null,
+            title: title.trim(),
+            type: itemType,
+          },
+          operation: itemType === 'todo' ? 'create_todo' : 'create_calendar_event',
+          source_text: 'manual quick add',
+        },
       });
       setTitle('');
       setDescription('');
       await refresh();
-      setBanner('已保存事项');
+      setBanner('已生成待确认写入');
     } catch {
-      setBanner('保存失败');
+      setBanner('创建确认请求失败');
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleToggleComplete(item: Item) {
+  async function handlePrepareItemOperation(item: Item, operation: ManualOperation) {
     setBanner(null);
     try {
-      if (item.status === 'completed') {
-        await cancelCompleteItem(item.id);
-      } else {
-        await completeItem(item.id);
-      }
+      await createWriteRequest({
+        source_command_id: `manual-${item.id}-${operation}-${Date.now()}`,
+        candidate_payload: {
+          item: {
+            description: item.description,
+            due_at: item.due_at,
+            end_at: item.end_at,
+            place_text: item.place_text,
+            start_at: item.start_at,
+            title: item.title,
+            type: item.type,
+          },
+          operation,
+          source_text: manualOperationLabel(operation),
+          target_id: item.id,
+        },
+      });
       await refresh();
+      setBanner('已生成待确认写入');
     } catch {
-      setBanner('更新状态失败');
+      setBanner('创建确认请求失败');
     }
   }
 
-  async function handleDeleteItem(item: Item) {
-    setBanner(null);
+  async function handleConfirmPending(writeRequestId: string) {
     try {
-      await deleteItem(item.id);
+      await confirmWriteRequest(writeRequestId);
       await refresh();
-      setBanner('已删除事项');
+      setBanner('已确认写入');
     } catch {
-      setBanner('删除失败');
+      setBanner('确认失败');
+    }
+  }
+
+  async function handleRejectPending(writeRequestId: string) {
+    try {
+      await rejectWriteRequest(writeRequestId);
+      await refresh();
+      setBanner('已取消写入');
+    } catch {
+      setBanner('取消失败');
     }
   }
 
@@ -293,12 +330,29 @@ export function HomeScreen() {
             style={styles.input}
           />
           <Pressable
-            onPress={handleCreateItem}
+            onPress={handlePrepareCreateItem}
             style={[styles.primaryButton, loading && styles.disabledButton]}
           >
-            <Text style={styles.primaryButtonText}>{loading ? '保存中' : '保存'}</Text>
+            <Text style={styles.primaryButtonText}>{loading ? '生成中' : '生成确认'}</Text>
           </Pressable>
         </View>
+
+        {pendingWrites.length > 0 ? (
+          <View style={styles.pendingSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>待确认</Text>
+              <Text style={styles.subtle}>{pendingWrites.length} 项</Text>
+            </View>
+            {pendingWrites.map((writeRequest) => (
+              <PendingWriteRow
+                key={writeRequest.id}
+                onConfirm={handleConfirmPending}
+                onReject={handleRejectPending}
+                writeRequest={writeRequest}
+              />
+            ))}
+          </View>
+        ) : null}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>{modeLabel(viewMode)}事项</Text>
@@ -313,12 +367,7 @@ export function HomeScreen() {
             </View>
           ) : (
             visibleItems.map((item) => (
-              <ItemRow
-                key={item.id}
-                item={item}
-                onDelete={handleDeleteItem}
-                onToggleComplete={handleToggleComplete}
-              />
+              <ItemRow key={item.id} item={item} onPrepareOperation={handlePrepareItemOperation} />
             ))
           )}
         </View>
@@ -371,12 +420,10 @@ function Metric({ label, value }: { label: string; value: number }) {
 
 function ItemRow({
   item,
-  onDelete,
-  onToggleComplete,
+  onPrepareOperation,
 }: {
   item: Item;
-  onDelete: (item: Item) => void;
-  onToggleComplete: (item: Item) => void;
+  onPrepareOperation: (item: Item, operation: ManualOperation) => void;
 }) {
   const completed = item.status === 'completed';
   return (
@@ -405,12 +452,49 @@ function ItemRow({
       </View>
       <View style={styles.rowActions}>
         {item.type === 'todo' ? (
-          <Pressable onPress={() => onToggleComplete(item)} style={styles.smallButton}>
+          <Pressable
+            onPress={() =>
+              onPrepareOperation(item, completed ? 'cancel_complete_item' : 'complete_item')
+            }
+            style={styles.smallButton}
+          >
             <Text style={styles.smallButtonText}>{completed ? '恢复' : '完成'}</Text>
           </Pressable>
         ) : null}
-        <Pressable onPress={() => onDelete(item)} style={styles.smallButtonDanger}>
+        <Pressable
+          onPress={() => onPrepareOperation(item, 'delete_item')}
+          style={styles.smallButtonDanger}
+        >
           <Text style={styles.smallButtonDangerText}>删除</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function PendingWriteRow({
+  onConfirm,
+  onReject,
+  writeRequest,
+}: {
+  onConfirm: (writeRequestId: string) => void;
+  onReject: (writeRequestId: string) => void;
+  writeRequest: WriteRequest;
+}) {
+  return (
+    <View style={styles.pendingRow}>
+      <View style={styles.itemBody}>
+        <Text style={styles.itemTitle}>{previewTitle(writeRequest.candidate_payload)}</Text>
+        <Text style={styles.itemMeta}>
+          {manualOperationLabel(String(writeRequest.candidate_payload.operation))}
+        </Text>
+      </View>
+      <View style={styles.rowActions}>
+        <Pressable onPress={() => onReject(writeRequest.id)} style={styles.smallButtonDanger}>
+          <Text style={styles.smallButtonDangerText}>取消</Text>
+        </Pressable>
+        <Pressable onPress={() => onConfirm(writeRequest.id)} style={styles.smallButton}>
+          <Text style={styles.smallButtonText}>确认</Text>
         </Pressable>
       </View>
     </View>
@@ -559,6 +643,25 @@ function formatDate(value: string) {
 
 function modeLabel(mode: ViewMode) {
   return mode === 'today' ? '今日' : mode === 'week' ? '本周' : '本月';
+}
+
+function manualOperationLabel(operation: string) {
+  if (operation === 'create_todo') {
+    return '新增待办';
+  }
+  if (operation === 'create_calendar_event') {
+    return '新增日历';
+  }
+  if (operation === 'complete_item') {
+    return '完成待办';
+  }
+  if (operation === 'cancel_complete_item') {
+    return '恢复待办';
+  }
+  if (operation === 'delete_item') {
+    return '删除事项';
+  }
+  return operation;
 }
 
 function statusLabel(status: string) {
@@ -771,6 +874,19 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '900',
     marginTop: spacing.sm,
+  },
+  pendingRow: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: '#E7C46A',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  pendingSection: {
+    gap: spacing.sm,
   },
   primaryButton: {
     alignItems: 'center',

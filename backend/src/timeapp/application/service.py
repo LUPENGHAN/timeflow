@@ -221,16 +221,23 @@ class TimeflowApplication:
         write_request.status = WriteRequestStatus.APPLIED
         write_request.updated_at = datetime.now(UTC)
         self.store.update_write_request(write_request)
-        events.append(
-            self._event(
-                DomainEventType.WRITE_REQUEST_APPLIED,
-                "write_request",
-                write_request.id,
-                {"status": write_request.status.value},
-            )
+        applied_event = self._event(
+            DomainEventType.WRITE_REQUEST_APPLIED,
+            "write_request",
+            write_request.id,
+            {"status": write_request.status.value},
         )
-        self.store.add_events(events)
-        return ConfirmationResult(write_request, events)
+        operation = str(write_request.candidate_payload.get("operation", ""))
+        if operation in {
+            "update_item",
+            "complete_item",
+            "cancel_complete_item",
+            "delete_item",
+        }:
+            self.store.add_events([applied_event])
+        else:
+            self.store.add_events([*events, applied_event])
+        return ConfirmationResult(write_request, [*events, applied_event])
 
     def reject_write_request(self, write_request_id: str, identity: Identity) -> ConfirmationResult:
         """Reject a pending write request without touching business facts."""
@@ -817,6 +824,9 @@ class TimeflowApplication:
         if operation == "complete_item":
             return self._apply_item_operations(write_request, "complete")
 
+        if operation == "cancel_complete_item":
+            return self._apply_item_operations(write_request, "activate")
+
         if operation == "delete_item":
             return self._apply_item_operations(write_request, "delete")
 
@@ -864,6 +874,12 @@ class TimeflowApplication:
                 )
             elif mode == "complete":
                 _, item_events = self.complete_item(write_request.identity, target_id)
+            elif mode == "activate":
+                _, item_events = self.update_item(
+                    write_request.identity,
+                    target_id,
+                    status=ItemStatus.ACTIVE,
+                )
             else:
                 _, item_events = self.delete_item(write_request.identity, target_id)
             events.extend(item_events)
