@@ -42,7 +42,15 @@ type ManualOperation =
   | 'complete_item'
   | 'cancel_complete_item'
   | 'delete_item';
-type ReminderAction = 'dismiss' | 'snooze' | 'cancel';
+type ReminderAction =
+  | 'registered'
+  | 'delivered'
+  | 'failed'
+  | 'registration_failed'
+  | 'local_unavailable'
+  | 'dismiss'
+  | 'snooze'
+  | 'cancel';
 
 type EditDraft = {
   title: string;
@@ -506,6 +514,20 @@ export function HomeScreen() {
     try {
       await applyReminderAction(reminder.id, {
         action,
+        fallback_after_seconds:
+          action === 'failed' || action === 'registration_failed' || action === 'local_unavailable'
+            ? 300
+            : undefined,
+        failed_reason:
+          action === 'failed'
+            ? 'manual_failed'
+            : action === 'registration_failed'
+              ? 'registration_failed'
+              : action === 'local_unavailable'
+                ? 'local_unavailable'
+                : undefined,
+        local_notification_id:
+          action === 'registered' ? `local-${reminder.id.slice(0, 8)}` : undefined,
         snooze_minutes: action === 'snooze' ? 10 : undefined,
       });
       await refresh();
@@ -1168,6 +1190,7 @@ function ReminderControl({
     reminder.status === 'armed' ||
     reminder.status === 'snoozed' ||
     reminder.status === 'delivered';
+  const canReportDelivery = active || reminder.status === 'failed';
   const busy = actingReminderId === reminder.id;
   return (
     <View style={styles.reminderControl}>
@@ -1195,6 +1218,28 @@ function ReminderControl({
             style={[styles.tinyButtonDanger, busy && styles.disabledButton]}
           >
             <Text style={styles.tinyButtonDangerText}>取消</Text>
+          </Pressable>
+        </View>
+      ) : null}
+      {canReportDelivery ? (
+        <View style={styles.reminderDiagnostics}>
+          <Pressable
+            onPress={() => onAction(reminder, 'registered')}
+            style={[styles.tinyButton, busy && styles.disabledButton]}
+          >
+            <Text style={styles.tinyButtonText}>注册</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => onAction(reminder, 'delivered')}
+            style={[styles.tinyButton, busy && styles.disabledButton]}
+          >
+            <Text style={styles.tinyButtonText}>送达</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => onAction(reminder, 'failed')}
+            style={[styles.tinyButtonDanger, busy && styles.disabledButton]}
+          >
+            <Text style={styles.tinyButtonDangerText}>失败</Text>
           </Pressable>
         </View>
       ) : null}
@@ -1868,6 +1913,15 @@ function outboxMessageMeta(message: OutboxMessage) {
 }
 
 function reminderActionSuccessLabel(action: ReminderAction) {
+  if (action === 'registered') {
+    return '提醒已注册';
+  }
+  if (action === 'delivered') {
+    return '提醒已送达';
+  }
+  if (action === 'failed' || action === 'registration_failed' || action === 'local_unavailable') {
+    return '提醒已标记失败';
+  }
   if (action === 'snooze') {
     return '提醒已延后';
   }
@@ -2143,6 +2197,11 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   reminderActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  reminderDiagnostics: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 6,
