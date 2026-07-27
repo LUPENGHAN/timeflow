@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from threading import RLock
 
 from timeapp.domain.enums import ItemStatus, WriteRequestStatus
-from timeapp.domain.models import DomainEvent, Item, Reminder, VoiceCommand, WriteRequest
+from timeapp.domain.models import DomainEvent, Item, Place, Reminder, VoiceCommand, WriteRequest
 
 
 @dataclass(slots=True)
@@ -20,6 +20,7 @@ class InMemoryStore:
     voice_commands: dict[str, VoiceCommand] = field(default_factory=dict)
     write_requests: dict[str, WriteRequest] = field(default_factory=dict)
     items: dict[str, Item] = field(default_factory=dict)
+    places: dict[str, Place] = field(default_factory=dict)
     reminders: dict[str, Reminder] = field(default_factory=dict)
     events: list[DomainEvent] = field(default_factory=list)
     _lock: RLock = field(default_factory=RLock)
@@ -70,6 +71,18 @@ class InMemoryStore:
 
         with self._lock:
             self.items[item.id] = item
+
+    def add_place(self, place: Place) -> None:
+        """Persist a place."""
+
+        with self._lock:
+            self.places[place.id] = place
+
+    def list_places(self, user_id: str) -> list[Place]:
+        """Return all visible places for a user."""
+
+        with self._lock:
+            return [place for place in self.places.values() if place.user_id == user_id]
 
     def add_reminder(self, reminder: Reminder) -> None:
         """Persist a reminder."""

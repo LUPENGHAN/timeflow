@@ -5,12 +5,15 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import {
   confirmWriteRequest,
   createItem,
+  createPlace,
   createWriteRequest,
   createVoiceCommand,
   getHealth,
   listItems,
+  listPlaces,
   rejectWriteRequest,
   type Item,
+  type Place,
   type VoiceCommandResult,
 } from '../api/client';
 import { colors, spacing } from '../constants/theme';
@@ -22,6 +25,7 @@ export function HomeScreen() {
   const [healthState, setHealthState] = useState<'checking' | 'ok' | 'failed'>('checking');
   const [viewMode, setViewMode] = useState<ViewMode>('today');
   const [items, setItems] = useState<Item[]>([]);
+  const [places, setPlaces] = useState<Place[]>([]);
   const [title, setTitle] = useState('');
   const [itemType, setItemType] = useState<ItemType>('todo');
   const [description, setDescription] = useState('');
@@ -38,6 +42,9 @@ export function HomeScreen() {
     candidate_payload: Record<string, unknown>;
   } | null>(null);
   const [pendingWriteLabel, setPendingWriteLabel] = useState<string | null>(null);
+  const [placeLabel, setPlaceLabel] = useState('');
+  const [placeType, setPlaceType] = useState<Place['place_type']>('home');
+  const [placeSubmitting, setPlaceSubmitting] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -63,6 +70,18 @@ export function HomeScreen() {
       .catch(() => {
         if (active) {
           setBanner('Failed to load items');
+        }
+      });
+
+    listPlaces()
+      .then((response) => {
+        if (active) {
+          setPlaces(response);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setPlaces([]);
         }
       });
 
@@ -116,6 +135,27 @@ export function HomeScreen() {
       setBanner('Create failed');
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  async function handleCreatePlace() {
+    if (!placeLabel.trim() || placeSubmitting) {
+      return;
+    }
+
+    setPlaceSubmitting(true);
+    try {
+      const result = await createPlace({
+        label: placeLabel.trim(),
+        place_type: placeType,
+      });
+      setPlaces((current) => [result.place, ...current]);
+      setPlaceLabel('');
+      setBanner('Place saved');
+    } catch {
+      setBanner('Place save failed');
+    } finally {
+      setPlaceSubmitting(false);
     }
   }
 
@@ -323,6 +363,58 @@ export function HomeScreen() {
               <Text style={styles.primaryButtonText}>{submitting ? 'Saving' : 'Save'}</Text>
             </Pressable>
           </View>
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>Places</Text>
+            <Text style={styles.count}>{places.length}</Text>
+          </View>
+          <View style={styles.form}>
+            <View style={styles.segmentedCompact}>
+              {(['home', 'work', 'custom', 'temporary_parking'] as const).map((type) => (
+                <Pressable
+                  key={type}
+                  onPress={() => setPlaceType(type)}
+                  style={[styles.segment, placeType === type && styles.segmentActive]}
+                >
+                  <Text
+                    style={[styles.segmentText, placeType === type && styles.segmentTextActive]}
+                  >
+                    {type.replace('_', ' ')}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+            <TextInput
+              value={placeLabel}
+              onChangeText={setPlaceLabel}
+              placeholder="Place label"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+            />
+            <Pressable
+              onPress={handleCreatePlace}
+              style={[styles.primaryButton, placeSubmitting && styles.primaryButtonDisabled]}
+            >
+              <Text style={styles.primaryButtonText}>
+                {placeSubmitting ? 'Saving' : 'Save place'}
+              </Text>
+            </Pressable>
+          </View>
+          {places.length === 0 ? (
+            <Text style={styles.emptyState}>No places yet.</Text>
+          ) : (
+            places.map((place) => (
+              <View key={place.id} style={styles.timelineRow}>
+                <Text style={styles.time}>{place.place_type}</Text>
+                <View style={styles.rowBody}>
+                  <Text style={styles.itemTitle}>{place.label}</Text>
+                  <Text style={styles.itemMeta}>{place.radius_meters}m radius</Text>
+                </View>
+              </View>
+            ))
+          )}
         </View>
 
         <View style={styles.section}>

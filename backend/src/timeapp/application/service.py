@@ -25,7 +25,15 @@ from timeapp.domain.enums import (
     WriteRequestStatus,
 )
 from timeapp.domain.errors import ErrorCode
-from timeapp.domain.models import Command, DomainEvent, Identity, Item, VoiceCommand, WriteRequest
+from timeapp.domain.models import (
+    Command,
+    DomainEvent,
+    Identity,
+    Item,
+    Place,
+    VoiceCommand,
+    WriteRequest,
+)
 
 
 class ApplicationError(RuntimeError):
@@ -209,6 +217,11 @@ class TimeflowApplication:
 
         return self.store.list_items(identity.user_id)
 
+    def list_places(self, identity: Identity) -> list[Place]:
+        """List skeleton places for a user."""
+
+        return self.store.list_places(identity.user_id)
+
     def create_item(
         self,
         identity: Identity,
@@ -246,6 +259,36 @@ class TimeflowApplication:
         )
         self.store.add_events([event])
         return item, [event]
+
+    def create_place(
+        self,
+        identity: Identity,
+        label: str,
+        place_type: str,
+        radius_meters: int = 100,
+        description: str | None = None,
+        latitude: str | None = None,
+        longitude: str | None = None,
+        accuracy_meters: int | None = None,
+    ) -> Place:
+        """Create a lightweight place skeleton record."""
+
+        now = datetime.now(UTC)
+        place = Place(
+            id=str(uuid4()),
+            user_id=identity.user_id,
+            label=label,
+            place_type=place_type,
+            radius_meters=radius_meters,
+            description=description,
+            latitude=latitude,
+            longitude=longitude,
+            accuracy_meters=accuracy_meters,
+            created_at=now,
+            updated_at=now,
+        )
+        self.store.add_place(place)
+        return place
 
     def create_write_request(
         self,

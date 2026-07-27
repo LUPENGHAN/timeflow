@@ -127,6 +127,23 @@ class Item:
 
 
 @dataclass(slots=True)
+class Place:
+    """Skeleton place model for home/work/custom/parking locations."""
+
+    id: str
+    user_id: str
+    label: str
+    place_type: str
+    latitude: str | None = None
+    longitude: str | None = None
+    accuracy_meters: int | None = None
+    radius_meters: int = 100
+    description: str | None = None
+    created_at: datetime = field(default_factory=utc_now)
+    updated_at: datetime = field(default_factory=utc_now)
+
+
+@dataclass(slots=True)
 class Reminder:
     """P0 reminder rule bound to an item."""
 

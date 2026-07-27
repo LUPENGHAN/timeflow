@@ -7,7 +7,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from timeapp.domain.models import DomainEvent, Item, Reminder, VoiceCommand, WriteRequest
+from timeapp.domain.models import DomainEvent, Item, Place, Reminder, VoiceCommand, WriteRequest
 
 
 class VoiceCommandCreateRequest(BaseModel):
@@ -194,6 +194,32 @@ class ReminderResponse(BaseModel):
         )
 
 
+class PlaceResponse(BaseModel):
+    """Skeleton place response."""
+
+    id: str
+    label: str
+    place_type: str
+    latitude: str | None
+    longitude: str | None
+    accuracy_meters: int | None
+    radius_meters: int
+    description: str | None
+
+    @classmethod
+    def from_domain(cls, place: Place) -> PlaceResponse:
+        return cls(
+            id=place.id,
+            label=place.label,
+            place_type=place.place_type,
+            latitude=place.latitude,
+            longitude=place.longitude,
+            accuracy_meters=place.accuracy_meters,
+            radius_meters=place.radius_meters,
+            description=place.description,
+        )
+
+
 class EventListResponse(BaseModel):
     """Cursor-based event list."""
 
@@ -206,3 +232,21 @@ class AgendaResponse(BaseModel):
 
     items: list[ItemResponse] = Field(default_factory=list)
     reminders: list[ReminderResponse] = Field(default_factory=list)
+
+
+class PlaceCreateRequest(BaseModel):
+    """Create a lightweight place skeleton record."""
+
+    label: str = Field(min_length=1)
+    place_type: str
+    radius_meters: int = 100
+    description: str | None = None
+    latitude: str | None = None
+    longitude: str | None = None
+    accuracy_meters: int | None = None
+
+
+class PlaceCreateResponse(BaseModel):
+    """Created place response."""
+
+    place: PlaceResponse

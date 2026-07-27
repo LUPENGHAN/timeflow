@@ -135,6 +135,26 @@ export function listItems() {
   return apiFetch<Item[]>('/items');
 }
 
+export function listPlaces() {
+  return apiFetch<Place[]>('/places');
+}
+
+export function createPlace(input: {
+  label: string;
+  place_type: 'home' | 'work' | 'custom' | 'temporary_parking';
+  radius_meters?: number;
+  description?: string | null;
+  latitude?: string | null;
+  longitude?: string | null;
+  accuracy_meters?: number | null;
+}) {
+  return apiFetch<{ place: Place }>('/places', {
+    body: JSON.stringify(input),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+  });
+}
+
 export function createItem(input: {
   type: 'calendar_event' | 'todo';
   title: string;
