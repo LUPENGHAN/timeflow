@@ -23,7 +23,9 @@ from timeapp.domain.enums import (
     ItemStatus,
     ItemType,
     NotificationRegistrationStatus,
+    ReminderPriority,
     ReminderStatus,
+    ReminderTriggerType,
     VoiceCommandStatus,
     WriteRequestStatus,
 )
@@ -359,6 +361,61 @@ class TimeflowApplication:
         )
         self.store.add_repeat_rule(repeat_rule)
         return repeat_rule
+
+    def create_reminder(
+        self,
+        identity: Identity,
+        item_id: str,
+        trigger_type: ReminderTriggerType,
+        trigger_at: datetime | None = None,
+        place_id: str | None = None,
+        priority: ReminderPriority = ReminderPriority.NORMAL,
+    ) -> tuple[Reminder, list[DomainEvent]]:
+        """Create a reminder bound to an existing user item."""
+
+        item = self.store.get_item(item_id)
+        if item is None or item.user_id != identity.user_id:
+            raise ApplicationError(
+                ErrorCode.ITEM_NOT_FOUND,
+                f"Item {item_id} was not found.",
+            )
+        if trigger_type == ReminderTriggerType.TIME and trigger_at is None:
+            raise ApplicationError(
+                ErrorCode.MISSING_REQUIRED_FIELD,
+                "Time reminders require trigger_at.",
+            )
+        if trigger_type != ReminderTriggerType.TIME and place_id is None:
+            raise ApplicationError(
+                ErrorCode.MISSING_REQUIRED_FIELD,
+                "Place reminders require place_id.",
+            )
+
+        now = datetime.now(UTC)
+        reminder = Reminder(
+            id=str(uuid4()),
+            user_id=identity.user_id,
+            item_id=item.id,
+            trigger_type=trigger_type,
+            trigger_at=trigger_at,
+            place_id=place_id,
+            priority=priority,
+            status=ReminderStatus.PENDING
+            if trigger_type == ReminderTriggerType.TIME
+            else ReminderStatus.ARMED,
+            created_at=now,
+            updated_at=now,
+        )
+        self.store.add_reminder(reminder)
+        event = self._event(
+            DomainEventType.WRITE_REQUEST_UPDATED
+            if trigger_type == ReminderTriggerType.TIME
+            else DomainEventType.REMINDER_ARMED,
+            "reminder",
+            reminder.id,
+            {"reminder": self._reminder_payload(reminder)},
+        )
+        self.store.add_events([event])
+        return reminder, [event]
 
     def degrade_permission(
         self,

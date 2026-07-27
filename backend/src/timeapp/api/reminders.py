@@ -8,11 +8,15 @@ from timeapp.api.dependencies import get_identity, get_timeflow_app
 from timeapp.api.errors import http_error
 from timeapp.api.schemas import (
     EventResponse,
+    ReminderCreateRequest,
+    ReminderCreateResponse,
     ReminderActionRequest,
     ReminderActionResponse,
     ReminderResponse,
 )
 from timeapp.application.service import ApplicationError, TimeflowApplication
+from timeapp.domain.enums import ReminderPriority, ReminderTriggerType
+from timeapp.domain.errors import ErrorCode
 from timeapp.domain.models import Identity
 
 router = APIRouter(prefix="/reminders", tags=["reminders"])
@@ -28,6 +32,41 @@ async def list_reminders(
     """Return reminders for the current user."""
 
     return [ReminderResponse.from_domain(reminder) for reminder in app.list_reminders(identity)]
+
+
+@router.post("", response_model=ReminderCreateResponse)
+async def create_reminder(
+    request: ReminderCreateRequest,
+    identity: IdentityDependency,
+    app: AppDependency,
+) -> ReminderCreateResponse:
+    """Create a reminder bound to an existing item."""
+
+    try:
+        trigger_type = ReminderTriggerType(request.trigger_type)
+        priority = ReminderPriority(request.priority)
+        reminder, events = app.create_reminder(
+            identity=identity,
+            item_id=request.item_id,
+            trigger_type=trigger_type,
+            trigger_at=request.trigger_at,
+            place_id=request.place_id,
+            priority=priority,
+        )
+    except ValueError as error:
+        raise http_error(
+            ApplicationError(
+                code=ErrorCode.UNKNOWN_ACTION,
+                message="Unsupported reminder trigger_type or priority.",
+            )
+        ) from error
+    except ApplicationError as error:
+        raise http_error(error) from error
+
+    return ReminderCreateResponse(
+        reminder=ReminderResponse.from_domain(reminder),
+        events=[EventResponse.from_domain(event) for event in events],
+    )
 
 
 @router.post("/{reminder_id}/actions", response_model=ReminderActionResponse)

@@ -247,6 +247,23 @@ class ReminderResponse(BaseModel):
         )
 
 
+class ReminderCreateRequest(BaseModel):
+    """Create a reminder bound to an existing item."""
+
+    item_id: str
+    trigger_type: str
+    trigger_at: datetime | None = None
+    place_id: str | None = None
+    priority: str = "normal"
+
+
+class ReminderCreateResponse(BaseModel):
+    """Created reminder response."""
+
+    reminder: ReminderResponse
+    events: list[EventResponse]
+
+
 class ReminderActionRequest(BaseModel):
     """Client reminder action callback."""
 
