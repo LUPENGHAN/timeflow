@@ -13,6 +13,7 @@ import {
   getHealth,
   getRealtimeUrl,
   listItems,
+  listOutboxMessages,
   listPendingWriteRequests,
   listPlaces,
   listRepeatRules,
@@ -20,6 +21,7 @@ import {
   updateWriteRequest,
   type Item,
   type Place,
+  type OutboxMessage,
   type Reminder,
   type RepeatRule,
   type VoiceCommandResult,
@@ -63,6 +65,7 @@ export function HomeScreen() {
   const [items, setItems] = useState<Item[]>([]);
   const [places, setPlaces] = useState<Place[]>([]);
   const [repeatRules, setRepeatRules] = useState<RepeatRule[]>([]);
+  const [outboxMessages, setOutboxMessages] = useState<OutboxMessage[]>([]);
   const [pendingWrites, setPendingWrites] = useState<WriteRequest[]>([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -93,16 +96,19 @@ export function HomeScreen() {
   const [repeatBusy, setRepeatBusy] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [itemResponse, pendingResponse, placeResponse, repeatResponse] = await Promise.all([
-      listItems(),
-      listPendingWriteRequests(),
-      listPlaces(),
-      listRepeatRules(),
-    ]);
+    const [itemResponse, pendingResponse, placeResponse, repeatResponse, outboxResponse] =
+      await Promise.all([
+        listItems(),
+        listPendingWriteRequests(),
+        listPlaces(),
+        listRepeatRules(),
+        listOutboxMessages(),
+      ]);
     setItems(itemResponse);
     setPendingWrites(pendingResponse);
     setPlaces(placeResponse);
     setRepeatRules(repeatResponse);
+    setOutboxMessages(outboxResponse);
   }, []);
 
   useEffect(() => {
@@ -815,6 +821,28 @@ export function HomeScreen() {
               ))}
             </View>
           ) : null}
+        </View>
+
+        <View style={styles.outboxSection}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>同步事件</Text>
+            <Text style={styles.subtle}>{outboxMessages.length} 条</Text>
+          </View>
+          {outboxMessages.length > 0 ? (
+            <View style={styles.placeList}>
+              {outboxMessages.slice(-5).map((message) => (
+                <View key={message.id} style={styles.queryRow}>
+                  <View style={styles.itemHeader}>
+                    <Text style={styles.itemTitle}>{outboxMessageSummary(message)}</Text>
+                    <Text style={styles.itemKind}>{message.status}</Text>
+                  </View>
+                  <Text style={styles.placeMeta}>{outboxMessageMeta(message)}</Text>
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.emptyText}>还没有同步事件。</Text>
+          )}
         </View>
 
         {pendingWrites.length > 0 ? (
@@ -1720,6 +1748,24 @@ function seriesStatusLabel(status: string) {
   return status === 'active' ? '启用' : status;
 }
 
+function outboxMessageSummary(message: OutboxMessage) {
+  const payload = message.payload as Record<string, unknown>;
+  if (typeof payload.operation === 'string') {
+    return payload.operation;
+  }
+  if (typeof payload.event_type === 'string') {
+    return payload.event_type;
+  }
+  if (typeof payload.type === 'string') {
+    return payload.type;
+  }
+  return message.event_id.slice(0, 8);
+}
+
+function outboxMessageMeta(message: OutboxMessage) {
+  return `${message.channel} · ${message.attempts} 次 · ${formatDate(message.created_at)}`;
+}
+
 function reminderActionSuccessLabel(action: ReminderAction) {
   if (action === 'snooze') {
     return '提醒已延后';
@@ -2133,6 +2179,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   repeatSection: {
+    gap: spacing.md,
+  },
+  outboxSection: {
     gap: spacing.md,
   },
   rowActions: {
