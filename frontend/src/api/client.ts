@@ -179,6 +179,42 @@ export function listItems() {
   return apiFetch<Item[]>('/items');
 }
 
+export function updateItem(
+  itemId: string,
+  input: {
+    title?: string | null;
+    description?: string | null;
+    start_at?: string | null;
+    end_at?: string | null;
+    due_at?: string | null;
+    place_text?: string | null;
+  },
+) {
+  return apiFetch<{ item: Item; events: EventMessage[] }>(`/items/${itemId}`, {
+    body: JSON.stringify(input),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'PATCH',
+  });
+}
+
+export function completeItem(itemId: string) {
+  return apiFetch<{ item: Item; events: EventMessage[] }>(`/items/${itemId}/complete`, {
+    method: 'POST',
+  });
+}
+
+export function cancelCompleteItem(itemId: string) {
+  return apiFetch<{ item: Item; events: EventMessage[] }>(`/items/${itemId}/cancel-complete`, {
+    method: 'POST',
+  });
+}
+
+export function deleteItem(itemId: string) {
+  return apiFetch<{ item: Item; events: EventMessage[] }>(`/items/${itemId}`, {
+    method: 'DELETE',
+  });
+}
+
 export function listOutboxMessages() {
   return apiFetch<OutboxMessage[]>('/events/outbox');
 }
@@ -209,6 +245,20 @@ export function applyReminderAction(
       method: 'POST',
     },
   );
+}
+
+export function createReminder(input: {
+  item_id: string;
+  trigger_type: 'time' | 'enter_place' | 'leave_place' | 'return_to_place';
+  trigger_at?: string | null;
+  place_id?: string | null;
+  priority?: 'low' | 'normal' | 'high';
+}) {
+  return apiFetch<{ reminder: Reminder; events: EventMessage[] }>('/reminders', {
+    body: JSON.stringify(input),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+  });
 }
 
 export function listPlaces() {

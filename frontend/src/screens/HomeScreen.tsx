@@ -1,1195 +1,734 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
-  applyReminderAction,
+  cancelCompleteItem,
+  completeItem,
   confirmWriteRequest,
   createItem,
-  createPlace,
-  createRepeatRule,
-  createWriteRequest,
   createVoiceCommand,
-  degradePermission,
+  deleteItem,
   getHealth,
   getRealtimeUrl,
   listItems,
-  listOutboxMessages,
-  listPlaces,
-  listRepeatRules,
+  listPendingWriteRequests,
   rejectWriteRequest,
-  updateWriteRequest,
   type Item,
-  type Place,
   type Reminder,
-  type RepeatRule,
   type VoiceCommandResult,
+  type WriteRequest,
 } from '../api/client';
 import { colors, spacing } from '../constants/theme';
 
 type ViewMode = 'today' | 'week' | 'month';
-type ItemType = 'calendar_event' | 'todo';
-type PermissionState = 'granted' | 'denied';
+type ItemType = 'todo' | 'calendar_event';
+type ConnectionState = 'checking' | 'online' | 'offline';
+type SocketState = 'connecting' | 'connected' | 'closed';
 
 export function HomeScreen() {
-  const [healthState, setHealthState] = useState<'checking' | 'ok' | 'failed'>('checking');
+  const [connection, setConnection] = useState<ConnectionState>('checking');
+  const [socketState, setSocketState] = useState<SocketState>('connecting');
   const [viewMode, setViewMode] = useState<ViewMode>('today');
   const [items, setItems] = useState<Item[]>([]);
-  const [places, setPlaces] = useState<Place[]>([]);
-  const [repeatRules, setRepeatRules] = useState<RepeatRule[]>([]);
+  const [pendingWrites, setPendingWrites] = useState<WriteRequest[]>([]);
   const [title, setTitle] = useState('');
-  const [itemType, setItemType] = useState<ItemType>('todo');
   const [description, setDescription] = useState('');
-  const [submitting, setSubmitting] = useState(false);
+  const [itemType, setItemType] = useState<ItemType>('todo');
   const [banner, setBanner] = useState<string | null>(null);
-  const [syncCursor, setSyncCursor] = useState(0);
-  const [syncState, setSyncState] = useState<'idle' | 'syncing' | 'offline'>('idle');
-  const [wsState, setWsState] = useState<'connecting' | 'connected' | 'closed'>('connecting');
-  const [uploadQueueCount, setUploadQueueCount] = useState(0);
-  const [outboxCount, setOutboxCount] = useState(0);
+  const [loading, setLoading] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('到家后提醒我取快递');
-  const [voiceSubmitting, setVoiceSubmitting] = useState(false);
   const [voiceResult, setVoiceResult] = useState<VoiceCommandResult | null>(null);
-  const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
-  const [selectedVoiceCandidateId, setSelectedVoiceCandidateId] = useState<string | null>(null);
-  const [pendingWriteRequest, setPendingWriteRequest] = useState<{
-    id: string;
-    candidate_payload: Record<string, unknown>;
-  } | null>(null);
-  const [pendingWriteLabel, setPendingWriteLabel] = useState<string | null>(null);
-  const [pendingDraftTitle, setPendingDraftTitle] = useState('');
-  const [placeLabel, setPlaceLabel] = useState('');
-  const [placeType, setPlaceType] = useState<Place['place_type']>('home');
-  const [placeRadius, setPlaceRadius] = useState<50 | 100 | 200>(100);
-  const [placeSubmitting, setPlaceSubmitting] = useState(false);
-  const [repeatPattern, setRepeatPattern] = useState('');
-  const [repeatRuleSubmitting, setRepeatRuleSubmitting] = useState(false);
-  const [permissions, setPermissions] = useState<{
-    location: PermissionState;
-    microphone: PermissionState;
-    notification: PermissionState;
-  }>({
-    location: 'granted',
-    microphone: 'granted',
-    notification: 'granted',
-  });
+  const [voiceBusy, setVoiceBusy] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const [itemResponse, pendingResponse] = await Promise.all([
+      listItems(),
+      listPendingWriteRequests(),
+    ]);
+    setItems(itemResponse);
+    setPendingWrites(pendingResponse);
+  }, []);
 
   useEffect(() => {
     let active = true;
-    const socket = new WebSocket(getRealtimeUrl());
-
-    socket.onopen = () => {
-      if (active) {
-        setWsState('connected');
-      }
-    };
-
-    socket.onmessage = (event) => {
-      if (!active) {
-        return;
-      }
-      const message = JSON.parse(String(event.data)) as {
-        event_type?: string;
-        payload?: { next_cursor?: number };
-      };
-      if (
-        message.event_type === 'sync.response' &&
-        typeof message.payload?.next_cursor === 'number'
-      ) {
-        setSyncCursor(message.payload.next_cursor);
-      }
-    };
-
-    socket.onerror = () => {
-      if (active) {
-        setWsState('closed');
-      }
-    };
-
-    socket.onclose = () => {
-      if (active) {
-        setWsState('closed');
-      }
-    };
 
     getHealth()
       .then(() => {
         if (active) {
-          setHealthState('ok');
+          setConnection('online');
         }
       })
       .catch(() => {
         if (active) {
-          setHealthState('failed');
+          setConnection('offline');
         }
       });
 
-    listItems()
-      .then((response) => {
+    const initialLoadTimer = setTimeout(() => {
+      refresh().catch(() => {
         if (active) {
-          setItems(response);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setBanner('Failed to load items');
+          setBanner('加载事项失败');
         }
       });
+    }, 0);
 
-    listPlaces()
-      .then((response) => {
-        if (active) {
-          setPlaces(response);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setPlaces([]);
-        }
-      });
-
-    listRepeatRules()
-      .then((response) => {
-        if (active) {
-          setRepeatRules(response);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setRepeatRules([]);
-        }
-      });
-
-    listOutboxMessages()
-      .then((response) => {
-        if (active) {
-          setOutboxCount(response.length);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setOutboxCount(0);
-        }
-      });
+    const socket = new WebSocket(getRealtimeUrl());
+    socket.onopen = () => {
+      if (active) {
+        setSocketState('connected');
+      }
+    };
+    socket.onclose = () => {
+      if (active) {
+        setSocketState('closed');
+      }
+    };
+    socket.onerror = () => {
+      if (active) {
+        setSocketState('closed');
+      }
+    };
+    socket.onmessage = (event) => {
+      const message = JSON.parse(String(event.data)) as { event_type?: string };
+      if (message.event_type === 'sync.response') {
+        refresh().catch(() => setBanner('同步失败'));
+      }
+    };
 
     return () => {
       active = false;
+      clearTimeout(initialLoadTimer);
       socket.close();
     };
-  }, []);
+  }, [refresh]);
 
-  const timelineItems = useMemo(
+  const calendarItems = useMemo(
     () => items.filter((item) => item.type === 'calendar_event'),
     [items],
   );
   const todoItems = useMemo(() => items.filter((item) => item.type === 'todo'), [items]);
+  const visibleItems = viewMode === 'today' ? items : items;
 
   async function handleCreateItem() {
-    if (!title.trim() || submitting) {
+    if (!title.trim() || loading) {
       return;
     }
 
-    const optimisticItem: Item = {
-      id: `local-${Date.now()}`,
-      type: itemType,
-      title: title.trim(),
-      description: description.trim() || null,
-      status: 'active',
-      start_at: null,
-      end_at: null,
-      due_at: null,
-      place_text: null,
-      version: 0,
-      updated_at: new Date().toISOString(),
-      reminders: [],
-    };
-
-    const previousItems = items;
-    setSubmitting(true);
-    setUploadQueueCount((current) => current + 1);
+    setLoading(true);
     setBanner(null);
-    setItems([optimisticItem, ...previousItems]);
-
     try {
       await createItem({
-        type: itemType,
-        title: title.trim(),
         description: description.trim() || null,
+        title: title.trim(),
+        type: itemType,
       });
-      const refreshed = await listItems();
-      setItems(refreshed);
       setTitle('');
       setDescription('');
-      setBanner('Item saved');
+      await refresh();
+      setBanner('已保存事项');
     } catch {
-      setItems(previousItems);
-      setBanner('Create failed');
+      setBanner('保存失败');
     } finally {
-      setSubmitting(false);
-      setUploadQueueCount((current) => Math.max(0, current - 1));
+      setLoading(false);
     }
   }
 
-  async function handleCreatePlace() {
-    if (!placeLabel.trim() || placeSubmitting) {
-      return;
-    }
-
-    setPlaceSubmitting(true);
-    try {
-      const result = await createPlace({
-        label: placeLabel.trim(),
-        place_type: placeType,
-        radius_meters: placeRadius,
-      });
-      setPlaces((current) => [result.place, ...current]);
-      setPlaceLabel('');
-      setBanner('Place saved');
-    } catch {
-      setBanner('Place save failed');
-    } finally {
-      setPlaceSubmitting(false);
-    }
-  }
-
-  async function handleSaveCurrentPlace() {
-    if (placeSubmitting) {
-      return;
-    }
-
-    setPlaceSubmitting(true);
-    try {
-      const result = await createPlace({
-        accuracy_meters: 25,
-        description: 'current location skeleton',
-        label: placeLabel.trim() || 'Current location',
-        latitude: '31.2304',
-        longitude: '121.4737',
-        place_type: placeType,
-        radius_meters: placeRadius,
-      });
-      setPlaces((current) => [result.place, ...current]);
-      setPlaceLabel('');
-      setBanner('Current place saved');
-    } catch {
-      setBanner('Current place save failed');
-    } finally {
-      setPlaceSubmitting(false);
-    }
-  }
-
-  async function handleCreateRepeatRule() {
-    if (!repeatPattern.trim() || repeatRuleSubmitting) {
-      return;
-    }
-
-    setRepeatRuleSubmitting(true);
-    try {
-      const result = await createRepeatRule({
-        pattern: repeatPattern.trim(),
-        weekdays: [],
-      });
-      setRepeatRules((current) => [result.repeat_rule, ...current]);
-      setRepeatPattern('');
-      setBanner('Repeat rule saved');
-    } catch {
-      setBanner('Repeat rule save failed');
-    } finally {
-      setRepeatRuleSubmitting(false);
-    }
-  }
-
-  async function handleLocationDegrade() {
-    try {
-      const result = await degradePermission({
-        permission: 'location',
-        place_text: '家',
-        reason: 'location permission denied',
-        title: '取快递',
-      });
-      setItems((current) => [result.item, ...current]);
-      setBanner('Location degraded to todo with text place');
-    } catch {
-      setBanner('Permission degrade failed');
-    }
-  }
-
-  async function handleReminderAction(
-    reminder: Reminder,
-    action: 'delivered' | 'failed' | 'snooze' | 'dismiss' | 'cancel',
-  ) {
-    try {
-      await applyReminderAction(reminder.id, {
-        action,
-        failed_reason: action === 'failed' ? 'local notification failed' : null,
-        snooze_minutes: 10,
-      });
-      await refreshItems();
-      setBanner(`Reminder ${action}`);
-    } catch {
-      setBanner('Reminder action failed');
-    }
-  }
-
-  async function handlePrepareItemAction(
-    item: Item,
-    operation: 'update_item' | 'complete_item' | 'delete_item',
-  ) {
-    const label =
-      operation === 'update_item'
-        ? 'Modify item'
-        : operation === 'complete_item'
-          ? 'Complete item'
-          : 'Delete item';
+  async function handleToggleComplete(item: Item) {
     setBanner(null);
     try {
-      const result = await createWriteRequest({
-        source_command_id: `manual-${item.id}-${operation}`,
-        candidate_payload: {
-          item: {
-            description: item.description,
-            due_at: item.due_at,
-            end_at: item.end_at,
-            place_text: item.place_text,
-            start_at: item.start_at,
-            title: item.title,
-            type: item.type,
-          },
-          operation,
-          source_text: label,
-          target_id: item.id,
-        },
-      });
-      setPendingWriteRequest({
-        candidate_payload: result.write_request.candidate_payload,
-        id: result.write_request.id,
-      });
-      setPendingWriteLabel(`${label}: ${item.title}`);
-      setPendingDraftTitle(item.title);
-      setBanner(null);
-    } catch {
-      setBanner('Failed to prepare write request');
-    }
-  }
-
-  async function handleSelectVoiceCandidate(candidate: Item) {
-    setSelectedVoiceCandidateId(candidate.id);
-    setVoiceStatus(`Selected ${candidate.title}`);
-    try {
-      const result = await createWriteRequest({
-        source_command_id: voiceResult?.voice_command.command_id ?? `voice-${candidate.id}`,
-        candidate_payload: {
-          item: {
-            description: candidate.description,
-            due_at: candidate.due_at,
-            end_at: candidate.end_at,
-            place_text: candidate.place_text,
-            start_at: candidate.start_at,
-            title: candidate.title,
-            type: candidate.type,
-          },
-          operation: 'update_item',
-          source_text: voiceTranscript,
-          target_id: candidate.id,
-        },
-      });
-      setPendingWriteRequest({
-        candidate_payload: result.write_request.candidate_payload,
-        id: result.write_request.id,
-      });
-      setPendingWriteLabel(`Modify item: ${candidate.title}`);
-      setPendingDraftTitle(candidate.title);
-    } catch {
-      setVoiceStatus('Candidate selection failed');
-    }
-  }
-
-  async function refreshItems() {
-    const refreshed = await listItems();
-    setItems(refreshed);
-  }
-
-  async function handleSyncRequest() {
-    setSyncState('syncing');
-    try {
-      const response = await fetch(
-        `${process.env.EXPO_PUBLIC_API_URL ?? 'http://127.0.0.1:8000/api/v1'}/events?after=${syncCursor}`,
-      );
-      if (!response.ok) {
-        throw new Error('sync failed');
+      if (item.status === 'completed') {
+        await cancelCompleteItem(item.id);
+      } else {
+        await completeItem(item.id);
       }
-      const payload = (await response.json()) as { next_cursor: number };
-      setSyncCursor(payload.next_cursor);
-      setSyncState('idle');
-      setBanner(`Synced to cursor ${payload.next_cursor}`);
+      await refresh();
     } catch {
-      setSyncState('offline');
-      setBanner('Sync failed');
+      setBanner('更新状态失败');
     }
   }
 
-  async function handleSubmitVoice() {
-    if (!voiceTranscript.trim() || voiceSubmitting) {
+  async function handleDeleteItem(item: Item) {
+    setBanner(null);
+    try {
+      await deleteItem(item.id);
+      await refresh();
+      setBanner('已删除事项');
+    } catch {
+      setBanner('删除失败');
+    }
+  }
+
+  async function handleParseVoice() {
+    if (!voiceTranscript.trim() || voiceBusy) {
       return;
     }
 
-    setVoiceSubmitting(true);
-    setVoiceStatus(null);
+    setVoiceBusy(true);
+    setVoiceResult(null);
     try {
       const result = await createVoiceCommand(voiceTranscript.trim());
       setVoiceResult(result);
-      setSelectedVoiceCandidateId(null);
-      setVoiceStatus(result.write_request ? 'Write request created' : 'No write requested');
+      await refresh();
     } catch {
-      setVoiceStatus('Voice command failed');
+      setBanner('语音解析失败');
     } finally {
-      setVoiceSubmitting(false);
+      setVoiceBusy(false);
     }
   }
 
   async function handleConfirmVoice() {
     const writeRequestId = voiceResult?.write_request?.id;
-    if (!writeRequestId || voiceSubmitting) {
+    if (!writeRequestId || voiceBusy) {
       return;
     }
 
-    setVoiceSubmitting(true);
+    setVoiceBusy(true);
     try {
       await confirmWriteRequest(writeRequestId);
-      await refreshItems();
-      setVoiceStatus('Write request applied');
+      await refresh();
+      setVoiceOpen(false);
+      setVoiceResult(null);
+      setBanner('语音事项已确认写入');
     } catch {
-      setVoiceStatus('Confirm failed');
+      setBanner('确认失败');
     } finally {
-      setVoiceSubmitting(false);
+      setVoiceBusy(false);
     }
   }
 
   async function handleRejectVoice() {
     const writeRequestId = voiceResult?.write_request?.id;
-    if (!writeRequestId || voiceSubmitting) {
+    if (!writeRequestId || voiceBusy) {
       return;
     }
 
-    setVoiceSubmitting(true);
+    setVoiceBusy(true);
     try {
       await rejectWriteRequest(writeRequestId);
-      setVoiceStatus('Write request cancelled');
+      await refresh();
+      setVoiceResult(null);
+      setBanner('已取消语音候选');
     } catch {
-      setVoiceStatus('Cancel failed');
+      setBanner('取消失败');
     } finally {
-      setVoiceSubmitting(false);
+      setVoiceBusy(false);
     }
-  }
-
-  async function handleConfirmPendingWriteRequest() {
-    if (!pendingWriteRequest) {
-      return;
-    }
-
-    try {
-      const operation = pendingWriteRequest.candidate_payload.operation;
-      if (operation === 'update_item' && pendingDraftTitle.trim()) {
-        const targetId = String(pendingWriteRequest.candidate_payload.target_id ?? '');
-        const editedPayload = {
-          ...pendingWriteRequest.candidate_payload,
-          item: {
-            ...(pendingWriteRequest.candidate_payload.item as Record<string, unknown>),
-            title: pendingDraftTitle.trim(),
-          },
-          operations: [
-            {
-              changes: { title: pendingDraftTitle.trim() },
-              op: 'update_item',
-              target_id: targetId,
-            },
-          ],
-        };
-        await updateWriteRequest(pendingWriteRequest.id, {
-          candidate_payload: editedPayload,
-        });
-      }
-      await confirmWriteRequest(pendingWriteRequest.id);
-      await refreshItems();
-      setBanner('Item updated');
-      setPendingWriteRequest(null);
-      setPendingWriteLabel(null);
-      setPendingDraftTitle('');
-    } catch {
-      setBanner('Confirm failed');
-    }
-  }
-
-  async function handleRejectPendingWriteRequest() {
-    if (!pendingWriteRequest) {
-      return;
-    }
-
-    try {
-      await rejectWriteRequest(pendingWriteRequest.id);
-      setPendingWriteRequest(null);
-      setPendingWriteLabel(null);
-      setPendingDraftTitle('');
-      setBanner('Action cancelled');
-    } catch {
-      setBanner('Cancel failed');
-    }
-  }
-
-  function renderReminderBadges(item: Item) {
-    if (item.reminders.length === 0) {
-      return null;
-    }
-
-    return (
-      <View style={styles.badgeRow}>
-        {item.reminders.map((reminder) => (
-          <View key={reminder.id} style={styles.reminderGroup}>
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>
-                {reminder.trigger_type} · {reminder.status}
-              </Text>
-            </View>
-            <View style={styles.reminderActions}>
-              {(['delivered', 'failed', 'snooze', 'dismiss', 'cancel'] as const).map((action) => (
-                <Pressable
-                  key={action}
-                  onPress={() => {
-                    void handleReminderAction(reminder, action);
-                  }}
-                  style={styles.inlineActionButton}
-                >
-                  <Text style={styles.inlineActionText}>{action}</Text>
-                </Pressable>
-              ))}
-            </View>
-            {reminder.fallback_status === 'requested' ? (
-              <Text style={styles.itemMeta}>Fallback requested</Text>
-            ) : null}
-          </View>
-        ))}
-      </View>
-    );
   }
 
   return (
     <View style={styles.root}>
-      <StatusBar style="auto" />
+      <StatusBar style="dark" />
       <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.header}>
+        <View style={styles.topBar}>
           <View>
-            <Text style={styles.eyebrow}>Today</Text>
-            <Text style={styles.title}>Timeflow</Text>
+            <Text style={styles.kicker}>Timeflow</Text>
+            <Text style={styles.title}>日程与待办</Text>
           </View>
-          <Pressable onPress={handleSyncRequest} style={styles.syncButton}>
-            <Text style={styles.syncButtonText}>
-              {syncState === 'syncing'
-                ? 'Syncing'
-                : healthState === 'ok'
-                  ? 'Connected'
-                  : healthState === 'failed'
-                    ? 'Offline'
-                    : 'Checking'}
-            </Text>
-          </Pressable>
+          <StatusPill connection={connection} socketState={socketState} />
         </View>
-        <Text style={styles.connectionStatus}>
-          {healthState === 'ok'
-            ? 'Backend health check passed'
-            : healthState === 'failed'
-              ? 'Backend health check failed'
-              : 'Checking backend health'}
-        </Text>
-        <Text style={styles.connectionStatus}>
-          {`WS ${wsState} · Cursor ${syncCursor} · Outbox ${outboxCount} · Upload queue ${uploadQueueCount}`}
-        </Text>
+
+        <View style={styles.metricsRow}>
+          <Metric label="日历" value={calendarItems.length} />
+          <Metric label="待办" value={todoItems.length} />
+          <Metric label="待确认" value={pendingWrites.length} />
+        </View>
+
         {banner ? <Text style={styles.banner}>{banner}</Text> : null}
 
-        <View style={styles.segmented}>
+        <View style={styles.toolbar}>
           {(['today', 'week', 'month'] as const).map((mode) => (
             <Pressable
               key={mode}
               onPress={() => setViewMode(mode)}
-              style={[styles.segment, viewMode === mode && styles.segmentActive]}
+              style={[styles.segmentButton, viewMode === mode && styles.segmentButtonActive]}
             >
-              <Text style={[styles.segmentText, viewMode === mode && styles.segmentTextActive]}>
-                {mode}
+              <Text
+                style={[
+                  styles.segmentButtonText,
+                  viewMode === mode && styles.segmentButtonTextActive,
+                ]}
+              >
+                {modeLabel(mode)}
               </Text>
             </Pressable>
           ))}
         </View>
 
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Quick add</Text>
-            <Text style={styles.count}>{items.length}</Text>
-          </View>
-          <View style={styles.form}>
-            <View style={styles.segmentedCompact}>
+        <View style={styles.quickAdd}>
+          <View style={styles.quickAddHeader}>
+            <Text style={styles.sectionTitle}>快速新增</Text>
+            <View style={styles.typeToggle}>
               {(['todo', 'calendar_event'] as const).map((type) => (
                 <Pressable
                   key={type}
                   onPress={() => setItemType(type)}
-                  style={[styles.segment, itemType === type && styles.segmentActive]}
-                >
-                  <Text style={[styles.segmentText, itemType === type && styles.segmentTextActive]}>
-                    {type === 'todo' ? 'Todo' : 'Calendar'}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-            <TextInput
-              value={title}
-              onChangeText={setTitle}
-              placeholder="New item title"
-              placeholderTextColor={colors.muted}
-              style={styles.input}
-            />
-            <TextInput
-              value={description}
-              onChangeText={setDescription}
-              placeholder="Description"
-              placeholderTextColor={colors.muted}
-              style={styles.input}
-            />
-            <Pressable
-              onPress={handleCreateItem}
-              style={[styles.primaryButton, submitting && styles.primaryButtonDisabled]}
-            >
-              <Text style={styles.primaryButtonText}>{submitting ? 'Saving' : 'Save'}</Text>
-            </Pressable>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Places</Text>
-            <Text style={styles.count}>{places.length}</Text>
-          </View>
-          <View style={styles.form}>
-            <View style={styles.segmentedCompact}>
-              {(['home', 'work', 'custom', 'temporary_parking'] as const).map((type) => (
-                <Pressable
-                  key={type}
-                  onPress={() => setPlaceType(type)}
-                  style={[styles.segment, placeType === type && styles.segmentActive]}
+                  style={[styles.typeButton, itemType === type && styles.typeButtonActive]}
                 >
                   <Text
-                    style={[styles.segmentText, placeType === type && styles.segmentTextActive]}
+                    style={[
+                      styles.typeButtonText,
+                      itemType === type && styles.typeButtonTextActive,
+                    ]}
                   >
-                    {type.replace('_', ' ')}
+                    {type === 'todo' ? '待办' : '日历'}
                   </Text>
                 </Pressable>
               ))}
             </View>
-            <TextInput
-              value={placeLabel}
-              onChangeText={setPlaceLabel}
-              placeholder="Place label"
-              placeholderTextColor={colors.muted}
-              style={styles.input}
-            />
-            <View style={styles.segmentedCompact}>
-              {([50, 100, 200] as const).map((radius) => (
-                <Pressable
-                  key={radius}
-                  onPress={() => setPlaceRadius(radius)}
-                  style={[styles.segment, placeRadius === radius && styles.segmentActive]}
-                >
-                  <Text
-                    style={[styles.segmentText, placeRadius === radius && styles.segmentTextActive]}
-                  >
-                    {radius}m
-                  </Text>
-                </Pressable>
-              ))}
+          </View>
+          <TextInput
+            value={title}
+            onChangeText={setTitle}
+            placeholder="输入标题"
+            placeholderTextColor={colors.muted}
+            style={styles.input}
+          />
+          <TextInput
+            value={description}
+            onChangeText={setDescription}
+            placeholder="备注，可选"
+            placeholderTextColor={colors.muted}
+            style={styles.input}
+          />
+          <Pressable
+            onPress={handleCreateItem}
+            style={[styles.primaryButton, loading && styles.disabledButton]}
+          >
+            <Text style={styles.primaryButtonText}>{loading ? '保存中' : '保存'}</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>{modeLabel(viewMode)}事项</Text>
+          <Text style={styles.subtle}>{visibleItems.length} 项</Text>
+        </View>
+
+        <View style={styles.list}>
+          {visibleItems.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>暂无事项</Text>
+              <Text style={styles.emptyText}>用快速新增或底部语音按钮创建第一条事项。</Text>
             </View>
-            <Pressable
-              onPress={handleCreatePlace}
-              style={[styles.primaryButton, placeSubmitting && styles.primaryButtonDisabled]}
-            >
-              <Text style={styles.primaryButtonText}>
-                {placeSubmitting ? 'Saving' : 'Save place'}
-              </Text>
-            </Pressable>
-            <Pressable
-              onPress={handleSaveCurrentPlace}
-              style={[styles.secondaryButton, placeSubmitting && styles.primaryButtonDisabled]}
-            >
-              <Text style={styles.secondaryButtonText}>Save current</Text>
-            </Pressable>
-          </View>
-          {places.length === 0 ? (
-            <Text style={styles.emptyState}>No places yet.</Text>
           ) : (
-            places.map((place) => (
-              <View key={place.id} style={styles.timelineRow}>
-                <Text style={styles.time}>{place.place_type}</Text>
-                <View style={styles.rowBody}>
-                  <Text style={styles.itemTitle}>{place.label}</Text>
-                  <Text style={styles.itemMeta}>{place.radius_meters}m radius</Text>
-                </View>
-              </View>
+            visibleItems.map((item) => (
+              <ItemRow
+                key={item.id}
+                item={item}
+                onDelete={handleDeleteItem}
+                onToggleComplete={handleToggleComplete}
+              />
             ))
           )}
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Repeat</Text>
-            <Text style={styles.count}>{repeatRules.length}</Text>
-          </View>
-          <View style={styles.form}>
-            <TextInput
-              value={repeatPattern}
-              onChangeText={setRepeatPattern}
-              placeholder="Repeat pattern"
-              placeholderTextColor={colors.muted}
-              style={styles.input}
-            />
-            <Pressable
-              onPress={handleCreateRepeatRule}
-              style={[styles.primaryButton, repeatRuleSubmitting && styles.primaryButtonDisabled]}
-            >
-              <Text style={styles.primaryButtonText}>
-                {repeatRuleSubmitting ? 'Saving' : 'Save repeat'}
-              </Text>
-            </Pressable>
-          </View>
-          {repeatRules.length === 0 ? (
-            <Text style={styles.emptyState}>No repeat rules yet.</Text>
-          ) : (
-            repeatRules.map((rule) => (
-              <View key={rule.id} style={styles.timelineRow}>
-                <Text style={styles.time}>{rule.series_status}</Text>
-                <View style={styles.rowBody}>
-                  <Text style={styles.itemTitle}>{rule.pattern}</Text>
-                  <Text style={styles.itemMeta}>
-                    {rule.weekdays.length > 0 ? rule.weekdays.join(', ') : 'No weekdays'}
-                  </Text>
-                </View>
-              </View>
-            ))
-          )}
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Permissions</Text>
-            <Text style={styles.count}>P0</Text>
-          </View>
-          <View style={styles.form}>
-            {(['microphone', 'notification', 'location'] as const).map((permission) => (
-              <View key={permission} style={styles.permissionRow}>
-                <Text style={styles.itemTitle}>{permission}</Text>
-                <View style={styles.inlineActions}>
-                  {(['granted', 'denied'] as const).map((state) => (
-                    <Pressable
-                      key={state}
-                      onPress={() =>
-                        setPermissions((current) => ({
-                          ...current,
-                          [permission]: state,
-                        }))
-                      }
-                      style={[
-                        styles.inlineActionButton,
-                        permissions[permission] === state && styles.inlineActionActive,
-                      ]}
-                    >
-                      <Text style={styles.inlineActionText}>{state}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            ))}
-            {permissions.location === 'denied' ? (
-              <Pressable onPress={handleLocationDegrade} style={styles.primaryButton}>
-                <Text style={styles.primaryButtonText}>Degrade location reminder</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Timeline</Text>
-            <Text style={styles.count}>{timelineItems.length}</Text>
-          </View>
-          {timelineItems.length === 0 ? (
-            <Text style={styles.emptyState}>No calendar items yet.</Text>
-          ) : (
-            timelineItems.map((item, index) => (
-              <View key={item.id} style={styles.timelineRow}>
-                <Text style={styles.time}>{`0${index + 9}:00`.slice(-5)}</Text>
-                <View style={styles.rowBody}>
-                  <Text style={styles.itemTitle}>{item.title}</Text>
-                  <Text style={styles.itemMeta}>{item.description ?? 'Calendar'}</Text>
-                  {renderReminderBadges(item)}
-                </View>
-                <View style={styles.inlineActions}>
-                  <Pressable
-                    onPress={() => handlePrepareItemAction(item, 'update_item')}
-                    style={styles.inlineActionButton}
-                  >
-                    <Text style={styles.inlineActionText}>Modify</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => handlePrepareItemAction(item, 'delete_item')}
-                    style={styles.inlineActionButton}
-                  >
-                    <Text style={styles.inlineActionText}>Delete</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ))
-          )}
-        </View>
-
-        <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Todos</Text>
-            <Text style={styles.count}>{todoItems.length}</Text>
-          </View>
-          {todoItems.length === 0 ? (
-            <Text style={styles.emptyState}>No todos yet.</Text>
-          ) : (
-            todoItems.map((todo) => (
-              <View key={todo.id} style={styles.todoRow}>
-                <View style={styles.checkbox} />
-                <View style={styles.rowBody}>
-                  <Text style={styles.itemTitle}>{todo.title}</Text>
-                  <Text style={styles.itemMeta}>{todo.description ?? 'Normal'}</Text>
-                  {renderReminderBadges(todo)}
-                </View>
-                <View style={styles.inlineActions}>
-                  <Pressable
-                    onPress={() => handlePrepareItemAction(todo, 'update_item')}
-                    style={styles.inlineActionButton}
-                  >
-                    <Text style={styles.inlineActionText}>Modify</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => handlePrepareItemAction(todo, 'complete_item')}
-                    style={styles.inlineActionButton}
-                  >
-                    <Text style={styles.inlineActionText}>Done</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={() => handlePrepareItemAction(todo, 'delete_item')}
-                    style={styles.inlineActionButton}
-                  >
-                    <Text style={styles.inlineActionText}>Delete</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ))
-          )}
-        </View>
-
-        <View style={styles.confirmation}>
-          <Text style={styles.confirmationLabel}>Pending confirmation</Text>
-          <Text style={styles.confirmationTitle}>
-            {pendingWriteLabel ?? 'Create todo: Pick up parcel'}
-          </Text>
-          <Text style={styles.itemMeta}>
-            {pendingWriteRequest
-              ? String(pendingWriteRequest.candidate_payload.operation ?? 'pending')
-              : 'Reminder when arriving home'}
-          </Text>
-          {pendingWriteRequest?.candidate_payload.operation === 'update_item' ? (
-            <TextInput
-              value={pendingDraftTitle}
-              onChangeText={setPendingDraftTitle}
-              placeholder="Edit title before confirm"
-              placeholderTextColor={colors.muted}
-              style={styles.input}
-            />
-          ) : null}
-          <View style={styles.actions}>
-            <Pressable onPress={handleRejectPendingWriteRequest} style={styles.secondaryButton}>
-              <Text style={styles.secondaryButtonText}>Cancel</Text>
-            </Pressable>
-            <Pressable onPress={handleConfirmPendingWriteRequest} style={styles.primaryButton}>
-              <Text style={styles.primaryButtonText}>Confirm</Text>
-            </Pressable>
-          </View>
         </View>
       </ScrollView>
 
-      <Modal animationType="slide" visible={voiceOpen}>
-        <View style={styles.modalRoot}>
-          <ScrollView contentContainerStyle={styles.modalContent}>
-            <View style={styles.header}>
-              <View>
-                <Text style={styles.eyebrow}>Mock voice</Text>
-                <Text style={styles.sectionTitle}>Voice command</Text>
-              </View>
-              <Pressable
-                onPress={() => {
-                  setVoiceOpen(false);
-                }}
-                style={styles.secondaryButton}
-              >
-                <Text style={styles.secondaryButtonText}>Close</Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.voiceCard}>
-              <Text style={styles.confirmationLabel}>RecordingCard</Text>
-              <TextInput
-                value={voiceTranscript}
-                onChangeText={setVoiceTranscript}
-                placeholder="Speak or type a mock transcript"
-                placeholderTextColor={colors.muted}
-                multiline
-                style={styles.textArea}
-              />
-              <Pressable
-                onPress={handleSubmitVoice}
-                style={[styles.primaryButton, voiceSubmitting && styles.primaryButtonDisabled]}
-              >
-                <Text style={styles.primaryButtonText}>
-                  {voiceSubmitting ? 'Parsing' : 'Send mock voice'}
-                </Text>
-              </Pressable>
-            </View>
-
-            <View style={styles.voiceCard}>
-              <Text style={styles.confirmationLabel}>TranscriptCard</Text>
-              <Text style={styles.cardText}>{voiceTranscript || 'No transcript yet'}</Text>
-            </View>
-
-            {voiceResult?.clarification ? (
-              <View style={styles.voiceCard}>
-                <Text style={styles.confirmationLabel}>ClarificationCard</Text>
-                <Text style={styles.cardText}>{voiceResult.clarification}</Text>
-              </View>
-            ) : null}
-
-            {voiceResult?.candidates?.length ? (
-              <View style={styles.voiceCard}>
-                <Text style={styles.confirmationLabel}>CandidateListCard</Text>
-                <View style={styles.candidateList}>
-                  {voiceResult.candidates.map((candidate) => (
-                    <Pressable
-                      key={candidate.id}
-                      onPress={() => {
-                        void handleSelectVoiceCandidate(candidate);
-                      }}
-                      style={[
-                        styles.candidateRow,
-                        selectedVoiceCandidateId === candidate.id && styles.candidateRowActive,
-                      ]}
-                    >
-                      <Text style={styles.itemTitle}>{candidate.title}</Text>
-                      <Text style={styles.itemMeta}>{candidate.type}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </View>
-            ) : null}
-
-            {voiceResult?.write_request ? (
-              <View style={styles.voiceCard}>
-                <Text style={styles.confirmationLabel}>WriteRequestPreviewCard</Text>
-                <Text style={styles.codeText}>
-                  {JSON.stringify(voiceResult.write_request.candidate_payload, null, 2)}
-                </Text>
-                <View style={styles.actions}>
-                  <Pressable onPress={handleRejectVoice} style={styles.secondaryButton}>
-                    <Text style={styles.secondaryButtonText}>Cancel</Text>
-                  </Pressable>
-                  <Pressable
-                    onPress={handleConfirmVoice}
-                    style={[styles.primaryButton, voiceSubmitting && styles.primaryButtonDisabled]}
-                  >
-                    <Text style={styles.primaryButtonText}>Confirm</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ) : null}
-
-            <View style={styles.voiceCard}>
-              <Text style={styles.confirmationLabel}>ResultCard</Text>
-              <Text style={styles.cardText}>{voiceStatus ?? 'Waiting for voice input'}</Text>
-            </View>
-          </ScrollView>
-        </View>
-      </Modal>
-
-      <Pressable onPress={() => setVoiceOpen(true)} style={styles.voiceButton}>
-        <Text style={styles.voiceButtonText}>Voice</Text>
+      <Pressable onPress={() => setVoiceOpen(true)} style={styles.voiceDock}>
+        <Text style={styles.voiceDockText}>语音</Text>
       </Pressable>
+
+      <VoiceSheet
+        busy={voiceBusy}
+        onClose={() => setVoiceOpen(false)}
+        onConfirm={handleConfirmVoice}
+        onParse={handleParseVoice}
+        onReject={handleRejectVoice}
+        result={voiceResult}
+        transcript={voiceTranscript}
+        visible={voiceOpen}
+        onTranscriptChange={setVoiceTranscript}
+      />
     </View>
   );
 }
 
+function StatusPill({
+  connection,
+  socketState,
+}: {
+  connection: ConnectionState;
+  socketState: SocketState;
+}) {
+  const online = connection === 'online' && socketState === 'connected';
+  return (
+    <View style={[styles.statusPill, online ? styles.statusPillOnline : styles.statusPillMuted]}>
+      <Text style={[styles.statusText, online ? styles.statusTextOnline : styles.statusTextMuted]}>
+        {online ? '已连接' : connection === 'checking' ? '检查中' : '离线'}
+      </Text>
+    </View>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricValue}>{value}</Text>
+      <Text style={styles.metricLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function ItemRow({
+  item,
+  onDelete,
+  onToggleComplete,
+}: {
+  item: Item;
+  onDelete: (item: Item) => void;
+  onToggleComplete: (item: Item) => void;
+}) {
+  const completed = item.status === 'completed';
+  return (
+    <View style={styles.itemRow}>
+      <View
+        style={[styles.itemStripe, item.type === 'todo' ? styles.todoStripe : styles.eventStripe]}
+      />
+      <View style={styles.itemBody}>
+        <View style={styles.itemHeader}>
+          <Text style={[styles.itemTitle, completed && styles.completedText]}>{item.title}</Text>
+          <Text style={styles.itemKind}>{item.type === 'todo' ? '待办' : '日历'}</Text>
+        </View>
+        <Text style={styles.itemMeta}>{itemSummary(item)}</Text>
+        {item.reminders.length > 0 ? (
+          <View style={styles.badges}>
+            {item.reminders.slice(0, 2).map((reminder) => (
+              <ReminderBadge key={reminder.id} reminder={reminder} />
+            ))}
+            {item.reminders.length > 2 ? (
+              <View style={styles.badge}>
+                <Text style={styles.badgeText}>+{item.reminders.length - 2}</Text>
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+      <View style={styles.rowActions}>
+        {item.type === 'todo' ? (
+          <Pressable onPress={() => onToggleComplete(item)} style={styles.smallButton}>
+            <Text style={styles.smallButtonText}>{completed ? '恢复' : '完成'}</Text>
+          </Pressable>
+        ) : null}
+        <Pressable onPress={() => onDelete(item)} style={styles.smallButtonDanger}>
+          <Text style={styles.smallButtonDangerText}>删除</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function ReminderBadge({ reminder }: { reminder: Reminder }) {
+  return (
+    <View style={styles.badge}>
+      <Text style={styles.badgeText}>
+        {reminderLabel(reminder)} · {statusLabel(reminder.status)}
+      </Text>
+    </View>
+  );
+}
+
+function VoiceSheet({
+  busy,
+  onClose,
+  onConfirm,
+  onParse,
+  onReject,
+  onTranscriptChange,
+  result,
+  transcript,
+  visible,
+}: {
+  busy: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  onParse: () => void;
+  onReject: () => void;
+  onTranscriptChange: (value: string) => void;
+  result: VoiceCommandResult | null;
+  transcript: string;
+  visible: boolean;
+}) {
+  const preview = result?.write_request?.candidate_payload;
+  return (
+    <Modal animationType="slide" visible={visible}>
+      <View style={styles.modalRoot}>
+        <ScrollView contentContainerStyle={styles.modalContent}>
+          <View style={styles.topBar}>
+            <View>
+              <Text style={styles.kicker}>语音输入</Text>
+              <Text style={styles.title}>确认候选</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>关闭</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.sheetSection}>
+            <Text style={styles.sectionTitle}>转写内容</Text>
+            <TextInput
+              multiline
+              onChangeText={onTranscriptChange}
+              placeholder="输入或粘贴一句语音转写"
+              placeholderTextColor={colors.muted}
+              style={styles.textArea}
+              value={transcript}
+            />
+            <Pressable
+              onPress={onParse}
+              style={[styles.primaryButton, busy && styles.disabledButton]}
+            >
+              <Text style={styles.primaryButtonText}>{busy ? '解析中' : '生成候选'}</Text>
+            </Pressable>
+          </View>
+
+          {result?.clarification ? (
+            <View style={styles.notice}>
+              <Text style={styles.noticeTitle}>需要补充</Text>
+              <Text style={styles.noticeText}>{result.clarification}</Text>
+            </View>
+          ) : null}
+
+          {preview ? (
+            <View style={styles.preview}>
+              <Text style={styles.sectionTitle}>写入预览</Text>
+              <Text style={styles.previewTitle}>{previewTitle(preview)}</Text>
+              <Text style={styles.previewMeta}>{String(preview.operation ?? 'pending')}</Text>
+              <View style={styles.modalActions}>
+                <Pressable onPress={onReject} style={styles.secondaryButton}>
+                  <Text style={styles.secondaryButtonText}>取消</Text>
+                </Pressable>
+                <Pressable
+                  onPress={onConfirm}
+                  style={[styles.primaryButton, busy && styles.disabledButton]}
+                >
+                  <Text style={styles.primaryButtonText}>确认写入</Text>
+                </Pressable>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>等待候选</Text>
+              <Text style={styles.emptyText}>生成候选后，写入前会停在确认门禁。</Text>
+            </View>
+          )}
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
+function itemSummary(item: Item) {
+  if (item.start_at) {
+    return `开始 ${formatDate(item.start_at)}${item.place_text ? ` · ${item.place_text}` : ''}`;
+  }
+  if (item.due_at) {
+    return `截止 ${formatDate(item.due_at)}${item.description ? ` · ${item.description}` : ''}`;
+  }
+  return item.description || statusLabel(item.status);
+}
+
+function previewTitle(payload: Record<string, unknown>) {
+  const item = payload.item;
+  if (item && typeof item === 'object' && 'title' in item) {
+    return String((item as { title?: unknown }).title ?? '未命名事项');
+  }
+  return '未命名事项';
+}
+
+function reminderLabel(reminder: Reminder) {
+  if (reminder.trigger_type === 'time' && reminder.trigger_at) {
+    return formatDate(reminder.trigger_at);
+  }
+  if (reminder.trigger_type === 'enter_place') {
+    return '到达地点';
+  }
+  if (reminder.trigger_type === 'leave_place') {
+    return '离开地点';
+  }
+  return '回到地点';
+}
+
+function formatDate(value: string) {
+  return new Date(value).toLocaleString('zh-CN', {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: '2-digit',
+  });
+}
+
+function modeLabel(mode: ViewMode) {
+  return mode === 'today' ? '今日' : mode === 'week' ? '本周' : '本月';
+}
+
+function statusLabel(status: string) {
+  if (status === 'active') {
+    return '进行中';
+  }
+  if (status === 'completed') {
+    return '已完成';
+  }
+  if (status === 'pending') {
+    return '等待中';
+  }
+  if (status === 'delivered') {
+    return '已提醒';
+  }
+  return status;
+}
+
 const styles = StyleSheet.create({
-  actions: {
+  badge: {
+    backgroundColor: '#E9F7EF',
+    borderColor: '#B8E3C8',
+    borderRadius: 6,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+  },
+  badgeText: {
+    color: '#17633A',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  badges: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+    marginTop: spacing.sm,
+  },
+  banner: {
+    backgroundColor: '#FFF4D8',
+    borderColor: '#E7C46A',
+    borderRadius: 8,
+    borderWidth: 1,
+    color: '#775300',
+    fontSize: 14,
+    padding: spacing.md,
+  },
+  completedText: {
+    color: colors.muted,
+    textDecorationLine: 'line-through',
+  },
+  content: {
+    gap: spacing.lg,
+    padding: spacing.lg,
+    paddingBottom: 116,
+    paddingTop: 64,
+  },
+  disabledButton: {
+    opacity: 0.65,
+  },
+  emptyState: {
+    alignItems: 'center',
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderStyle: 'dashed',
+    borderWidth: 1,
+    padding: spacing.xl,
+  },
+  emptyText: {
+    color: colors.muted,
+    fontSize: 14,
+    marginTop: spacing.xs,
+    textAlign: 'center',
+  },
+  emptyTitle: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  eventStripe: {
+    backgroundColor: '#7C5CFF',
+  },
+  input: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: 15,
+    minHeight: 44,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  itemBody: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  itemHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  itemKind: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  itemMeta: {
+    color: colors.muted,
+    fontSize: 13,
+  },
+  itemRow: {
+    alignItems: 'stretch',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    minHeight: 82,
+    overflow: 'hidden',
+  },
+  itemStripe: {
+    width: 5,
+  },
+  itemTitle: {
+    color: colors.text,
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  kicker: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  list: {
+    gap: spacing.md,
+  },
+  metric: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    padding: spacing.md,
+  },
+  metricLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  metricValue: {
+    color: colors.text,
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  metricsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  modalActions: {
     flexDirection: 'row',
     gap: spacing.sm,
     justifyContent: 'flex-end',
     marginTop: spacing.md,
   },
-  banner: {
-    color: colors.accent,
-    fontSize: 13,
-    fontWeight: '600',
-    marginTop: -spacing.sm,
-  },
-  badge: {
-    backgroundColor: colors.background,
-    borderRadius: 999,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-  },
-  badgeRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-    marginTop: spacing.xs,
-  },
-  badgeText: {
-    color: colors.muted,
-    fontSize: 11,
-    fontWeight: '600',
-    textTransform: 'capitalize',
-  },
-  checkbox: {
-    borderColor: colors.border,
-    borderRadius: 6,
-    borderWidth: 2,
-    height: 22,
-    width: 22,
-  },
-  cardText: {
-    color: colors.text,
-    fontSize: 15,
-    marginTop: spacing.sm,
-  },
-  candidateList: {
-    gap: spacing.sm,
-  },
-  candidateRow: {
-    backgroundColor: colors.background,
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    padding: spacing.md,
-  },
-  candidateRowActive: {
-    borderColor: colors.accent,
-  },
-  codeText: {
-    backgroundColor: colors.background,
-    borderRadius: 8,
-    color: colors.text,
-    fontSize: 12,
-    marginTop: spacing.sm,
-    padding: spacing.sm,
-  },
-  confirmation: {
-    backgroundColor: colors.surface,
-    borderColor: colors.warning,
-    borderRadius: 8,
-    borderWidth: 1,
-    padding: spacing.md,
-  },
-  confirmationLabel: {
-    color: colors.warning,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  confirmationTitle: {
-    color: colors.text,
-    fontSize: 17,
-    fontWeight: '700',
-    marginTop: spacing.sm,
-  },
-  content: {
-    gap: spacing.lg,
-    padding: spacing.lg,
-    paddingBottom: 112,
-    paddingTop: 72,
-  },
-  count: {
-    color: colors.muted,
-    fontSize: 14,
-  },
-  connectionStatus: {
-    color: colors.muted,
-    fontSize: 13,
-    marginTop: -spacing.sm,
-  },
-  emptyState: {
-    color: colors.muted,
-    fontSize: 13,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  eyebrow: {
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  form: {
-    gap: spacing.sm,
-    padding: spacing.md,
-  },
-  header: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  input: {
-    backgroundColor: colors.background,
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    color: colors.text,
-    fontSize: 15,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-  },
-  inlineActionButton: {
-    borderColor: colors.border,
-    borderRadius: 6,
-    borderWidth: 1,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-  },
-  inlineActionActive: {
-    borderColor: colors.accent,
-  },
-  inlineActionText: {
-    color: colors.text,
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  inlineActions: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  itemMeta: {
-    color: colors.muted,
-    fontSize: 13,
-    marginTop: spacing.xs,
-  },
-  itemTitle: {
-    color: colors.text,
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  permissionRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: spacing.md,
-  },
   modalContent: {
-    gap: spacing.md,
+    gap: spacing.lg,
     padding: spacing.lg,
     paddingBottom: spacing.xl,
     paddingTop: 64,
@@ -1198,175 +737,244 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background,
     flex: 1,
   },
+  notice: {
+    backgroundColor: '#FFF4D8',
+    borderColor: '#E7C46A',
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  noticeText: {
+    color: '#775300',
+    fontSize: 14,
+    marginTop: spacing.xs,
+  },
+  noticeTitle: {
+    color: '#775300',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  preview: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  previewMeta: {
+    color: colors.muted,
+    fontSize: 13,
+    marginTop: spacing.xs,
+  },
+  previewTitle: {
+    color: colors.text,
+    fontSize: 20,
+    fontWeight: '900',
+    marginTop: spacing.sm,
+  },
   primaryButton: {
     alignItems: 'center',
     backgroundColor: colors.accent,
     borderRadius: 8,
-    minWidth: 92,
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-  },
-  primaryButtonDisabled: {
-    opacity: 0.7,
   },
   primaryButtonText: {
     color: colors.surface,
     fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
+    fontWeight: '900',
   },
-  reminderActions: {
+  quickAdd: {
+    gap: spacing.md,
+  },
+  quickAddHeader: {
+    alignItems: 'center',
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.xs,
-  },
-  reminderGroup: {
-    gap: spacing.xs,
-    width: '100%',
+    justifyContent: 'space-between',
   },
   root: {
     backgroundColor: colors.background,
     flex: 1,
   },
-  rowBody: {
-    flex: 1,
+  rowActions: {
+    alignItems: 'flex-end',
+    gap: spacing.sm,
+    justifyContent: 'center',
+    padding: spacing.md,
   },
   secondaryButton: {
+    alignItems: 'center',
     borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 1,
-    minWidth: 92,
+    minHeight: 44,
+    justifyContent: 'center',
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   secondaryButtonText: {
     color: colors.text,
     fontSize: 14,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  section: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
+    fontWeight: '800',
   },
   sectionHeader: {
     alignItems: 'center',
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: spacing.md,
   },
   sectionTitle: {
     color: colors.text,
     fontSize: 18,
-    fontWeight: '700',
+    fontWeight: '900',
   },
-  segment: {
+  segmentButton: {
+    alignItems: 'center',
     borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flex: 1,
+    minHeight: 40,
+    justifyContent: 'center',
+  },
+  segmentButtonActive: {
+    backgroundColor: colors.text,
+    borderColor: colors.text,
+  },
+  segmentButtonText: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  segmentButtonTextActive: {
+    color: colors.surface,
+  },
+  sheetSection: {
+    gap: spacing.md,
+  },
+  smallButton: {
+    alignItems: 'center',
+    backgroundColor: '#EAF1FF',
+    borderRadius: 6,
+    minWidth: 58,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 7,
+  },
+  smallButtonDanger: {
+    alignItems: 'center',
+    backgroundColor: '#FFEDEE',
+    borderRadius: 6,
+    minWidth: 58,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 7,
+  },
+  smallButtonDangerText: {
+    color: '#B4232C',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  smallButtonText: {
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  statusPill: {
     borderRadius: 999,
     borderWidth: 1,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
-  segmentActive: {
-    backgroundColor: colors.accent,
-    borderColor: colors.accent,
-  },
-  segmented: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  segmentedCompact: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  segmentText: {
-    color: colors.text,
-    fontSize: 13,
-    fontWeight: '600',
-    textTransform: 'capitalize',
-  },
-  segmentTextActive: {
-    color: colors.surface,
-  },
-  syncButton: {
+  statusPillMuted: {
+    backgroundColor: colors.surface,
     borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
   },
-  syncButtonText: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: '700',
+  statusPillOnline: {
+    backgroundColor: '#E9F7EF',
+    borderColor: '#B8E3C8',
   },
-  time: {
+  statusText: {
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  statusTextMuted: {
     color: colors.muted,
-    fontSize: 14,
-    width: 56,
   },
-  timelineRow: {
-    alignItems: 'center',
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    minHeight: 72,
-    padding: spacing.md,
+  statusTextOnline: {
+    color: '#17633A',
   },
-  title: {
-    color: colors.text,
-    fontSize: 32,
-    fontWeight: '800',
-  },
-  todoRow: {
-    alignItems: 'center',
-    borderBottomColor: colors.border,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    gap: spacing.md,
-    minHeight: 68,
-    padding: spacing.md,
-  },
-  voiceButton: {
-    alignItems: 'center',
-    backgroundColor: colors.accent,
-    borderRadius: 36,
-    bottom: 28,
-    height: 72,
-    justifyContent: 'center',
-    left: '50%',
-    marginLeft: -36,
-    position: 'absolute',
-    width: 72,
-  },
-  voiceButtonText: {
-    color: colors.surface,
-    fontSize: 14,
+  subtle: {
+    color: colors.muted,
+    fontSize: 13,
     fontWeight: '700',
   },
-  voiceCard: {
+  textArea: {
     backgroundColor: colors.surface,
     borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 1,
-    gap: spacing.sm,
-    padding: spacing.md,
+    color: colors.text,
+    fontSize: 16,
+    minHeight: 120,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.md,
+    textAlignVertical: 'top',
   },
-  textArea: {
-    backgroundColor: colors.background,
+  title: {
+    color: colors.text,
+    fontSize: 30,
+    fontWeight: '900',
+  },
+  todoStripe: {
+    backgroundColor: colors.accent,
+  },
+  toolbar: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  topBar: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  typeButton: {
     borderColor: colors.border,
     borderRadius: 8,
     borderWidth: 1,
-    color: colors.text,
-    fontSize: 15,
-    minHeight: 96,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    textAlignVertical: 'top',
+  },
+  typeButtonActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  typeButtonText: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  typeButtonTextActive: {
+    color: colors.surface,
+  },
+  typeToggle: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  voiceDock: {
+    alignItems: 'center',
+    backgroundColor: colors.accent,
+    borderRadius: 34,
+    bottom: 28,
+    height: 68,
+    justifyContent: 'center',
+    left: '50%',
+    marginLeft: -34,
+    position: 'absolute',
+    width: 68,
+  },
+  voiceDockText: {
+    color: colors.surface,
+    fontSize: 14,
+    fontWeight: '900',
   },
 });
