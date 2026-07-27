@@ -16,7 +16,7 @@ from timeapp.api.schemas import (
 )
 from timeapp.api.realtime import realtime_manager
 from timeapp.application.service import ApplicationError, TimeflowApplication
-from timeapp.domain.models import Identity
+from timeapp.domain.models import Identity, Reminder
 
 router = APIRouter(prefix="/voice", tags=["voice-command"])
 IdentityDependency = Annotated[Identity, Depends(get_identity)]
@@ -37,6 +37,9 @@ async def create_voice_command(
         raise http_error(error) from error
 
     await realtime_manager.broadcast_events(result.events)
+    reminders_by_item: dict[str, list[Reminder]] = {}
+    for reminder in app.list_reminders(identity):
+        reminders_by_item.setdefault(reminder.item_id, []).append(reminder)
 
     return VoiceCommandCreateResponse(
         voice_command=VoiceCommandResponse.from_domain(result.voice_command),
@@ -45,5 +48,8 @@ async def create_voice_command(
         else None,
         events=[EventResponse.from_domain(event) for event in result.events],
         clarification=result.clarification,
-        candidates=[ItemResponse.from_domain(item) for item in result.candidates],
+        candidates=[
+            ItemResponse.from_domain(item, reminders_by_item.get(item.id, []))
+            for item in result.candidates
+        ],
     )

@@ -49,6 +49,59 @@ def test_voice_command_creates_and_confirms_todo_reminder() -> None:
     app.dependency_overrides.clear()
 
 
+def test_voice_query_returns_matching_agenda_without_write_request() -> None:
+    """Read-only voice queries should return agenda candidates without writes."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        starts_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        client.post(
+            "/api/v1/items",
+            json={
+                "type": "calendar_event",
+                "title": "项目会",
+                "start_at": starts_at,
+            },
+        )
+        item_id = client.post(
+            "/api/v1/items",
+            json={"type": "todo", "title": "买牛奶"},
+        ).json()["item"]["id"]
+        reminder_request = client.post(
+            "/api/v1/reminders",
+            json={
+                "item_id": item_id,
+                "trigger_type": "time",
+                "trigger_at": (datetime.now(UTC) + timedelta(hours=2)).isoformat(),
+                "priority": "normal",
+            },
+        )
+        assert reminder_request.status_code == 200
+
+        voice_response = client.post(
+            "/api/v1/voice/commands",
+            json={"transcript": "我今天有什么安排？"},
+        )
+
+        assert voice_response.status_code == 200
+        body = voice_response.json()
+        assert body["write_request"] is None
+        assert body["clarification"] is None
+        assert [candidate["title"] for candidate in body["candidates"]] == [
+            "项目会",
+            "买牛奶",
+        ]
+        assert body["candidates"][1]["reminders"][0]["trigger_type"] == "time"
+
+        pending_response = client.get("/api/v1/write-requests/pending")
+        assert pending_response.status_code == 200
+        assert pending_response.json() == []
+
+    app.dependency_overrides.clear()
+
+
 def test_events_endpoint_returns_cursor_sync_events() -> None:
     """HTTP sync should expose domain events with a cursor."""
 

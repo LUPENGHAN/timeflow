@@ -108,8 +108,15 @@ class TimeflowApplication:
         events = [status_event]
 
         if command.action == CommandAction.QUERY:
+            candidates = self._query_items(command)
             self.store.add_events(events)
-            return VoiceCommandResult(voice_command, command, None, events)
+            return VoiceCommandResult(
+                voice_command,
+                command,
+                None,
+                events,
+                candidates=candidates,
+            )
 
         candidates: list[Item] = []
         if command.action in {CommandAction.UPDATE, CommandAction.DELETE, CommandAction.COMPLETE}:
@@ -290,6 +297,44 @@ class TimeflowApplication:
         """List user's calendar/todo items."""
 
         return self.store.list_items(identity.user_id)
+
+    def _query_items(self, command: Command) -> list[Item]:
+        """Return items matching a read-only voice query time window."""
+
+        start = command.time_range_start
+        end = command.time_range_end
+        reminders_by_item: dict[str, list[Reminder]] = {}
+        for reminder in self.store.list_reminders(command.identity.user_id):
+            reminders_by_item.setdefault(reminder.item_id, []).append(reminder)
+
+        results: list[Item] = []
+        for item in self.store.list_items(command.identity.user_id):
+            if item.status == ItemStatus.DELETED:
+                continue
+            anchor = item.start_at or item.due_at
+            if anchor is None:
+                anchor = next(
+                    (
+                        reminder.trigger_at
+                        for reminder in reminders_by_item.get(item.id, [])
+                        if reminder.trigger_at is not None
+                    ),
+                    None,
+                )
+            if anchor is None:
+                if item.item_type == ItemType.TODO:
+                    results.append(item)
+                continue
+            if (start is None or anchor >= start) and (end is None or anchor < end):
+                results.append(item)
+
+        return sorted(results, key=self._item_query_sort_key)
+
+    def _item_query_sort_key(self, item: Item) -> tuple[int, datetime, str]:
+        anchor = item.start_at or item.due_at
+        if anchor is None:
+            return (1, item.updated_at, item.title)
+        return (0, anchor, item.title)
 
     def list_places(self, identity: Identity) -> list[Place]:
         """List skeleton places for a user."""

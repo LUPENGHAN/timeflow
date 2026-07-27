@@ -987,6 +987,38 @@ function VoiceSheet({
             </View>
           ) : null}
 
+          {!result?.write_request && result?.candidates.length ? (
+            <View style={styles.preview}>
+              <Text style={styles.sectionTitle}>查询结果</Text>
+              <View style={styles.queryList}>
+                {result.candidates.map((item) => (
+                  <View key={item.id} style={styles.queryRow}>
+                    <View style={styles.placeBody}>
+                      <View style={styles.itemHeader}>
+                        <Text style={styles.itemTitle}>{item.title}</Text>
+                        <Text style={styles.itemKind}>
+                          {item.type === 'todo' ? '待办' : '日历'}
+                        </Text>
+                      </View>
+                      <Text style={styles.itemMeta}>{itemSummary(item)}</Text>
+                    </View>
+                    {item.reminders.length > 0 ? (
+                      <View style={styles.badges}>
+                        {item.reminders.slice(0, 2).map((reminder) => (
+                          <View key={reminder.id} style={styles.badge}>
+                            <Text style={styles.badgeText}>
+                              {reminderLabel(reminder)} · {statusLabel(reminder.status)}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
+
           {preview ? (
             <View style={styles.preview}>
               <Text style={styles.sectionTitle}>写入预览</Text>
@@ -1779,6 +1811,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
+  },
+  queryList: {
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  queryRow: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: spacing.sm,
+    padding: spacing.md,
   },
   placeList: {
     gap: spacing.md,
