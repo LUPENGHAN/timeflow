@@ -561,6 +561,16 @@ class TimeflowApplication:
             )
 
         now = datetime.now(UTC)
+        initial_status = (
+            ReminderStatus.ARMED
+            if trigger_type in {ReminderTriggerType.ENTER_PLACE, ReminderTriggerType.LEAVE_PLACE}
+            else ReminderStatus.PENDING
+        )
+        event_type = (
+            DomainEventType.REMINDER_ARMED
+            if initial_status == ReminderStatus.ARMED
+            else DomainEventType.WRITE_REQUEST_UPDATED
+        )
         reminder = Reminder(
             id=str(uuid4()),
             user_id=identity.user_id,
@@ -569,17 +579,13 @@ class TimeflowApplication:
             trigger_at=trigger_at,
             place_id=place_id,
             priority=priority,
-            status=ReminderStatus.PENDING
-            if trigger_type == ReminderTriggerType.TIME
-            else ReminderStatus.ARMED,
+            status=initial_status,
             created_at=now,
             updated_at=now,
         )
         self.store.add_reminder(reminder)
         event = self._event(
-            DomainEventType.WRITE_REQUEST_UPDATED
-            if trigger_type == ReminderTriggerType.TIME
-            else DomainEventType.REMINDER_ARMED,
+            event_type,
             "reminder",
             reminder.id,
             {"reminder": self._reminder_payload(reminder)},
@@ -782,6 +788,9 @@ class TimeflowApplication:
         if action == "registered":
             reminder.local_registration_status = NotificationRegistrationStatus.REGISTERED
             reminder.local_notification_id = local_notification_id
+        elif action == "armed":
+            reminder.status = ReminderStatus.ARMED
+            event_type = DomainEventType.REMINDER_ARMED
         elif action == "delivered":
             reminder.status = ReminderStatus.DELIVERED
             reminder.last_triggered_at = now
