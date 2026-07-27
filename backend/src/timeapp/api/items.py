@@ -6,9 +6,16 @@ from fastapi import APIRouter, Depends
 
 from timeapp.api.dependencies import get_identity, get_timeflow_app
 from timeapp.api.errors import http_error
-from timeapp.api.schemas import EventResponse, ItemCreateRequest, ItemCreateResponse, ItemResponse
+from timeapp.api.schemas import (
+    EventResponse,
+    ItemCreateRequest,
+    ItemCreateResponse,
+    ItemMutationResponse,
+    ItemResponse,
+    ItemUpdateRequest,
+)
 from timeapp.application.service import ApplicationError, TimeflowApplication
-from timeapp.domain.enums import ItemType
+from timeapp.domain.enums import ItemStatus, ItemType
 from timeapp.domain.errors import ErrorCode
 from timeapp.domain.models import Identity, Reminder
 
@@ -64,6 +71,95 @@ async def create_item(
         place_text=request.place_text,
     )
     return ItemCreateResponse(
+        item=ItemResponse.from_domain(item, []),
+        events=[EventResponse.from_domain(event) for event in events],
+    )
+
+
+@router.patch("/{item_id}", response_model=ItemMutationResponse)
+async def update_item(
+    item_id: str,
+    request: ItemUpdateRequest,
+    identity: IdentityDependency,
+    app: AppDependency,
+) -> ItemMutationResponse:
+    """Update editable fields on a calendar or todo item."""
+
+    try:
+        item, events = app.update_item(
+            identity=identity,
+            item_id=item_id,
+            title=request.title,
+            description=request.description,
+            start_at=request.start_at,
+            end_at=request.end_at,
+            due_at=request.due_at,
+            place_text=request.place_text,
+        )
+    except ApplicationError as error:
+        raise http_error(error) from error
+
+    reminders = [reminder for reminder in app.list_reminders(identity) if reminder.item_id == item.id]
+    return ItemMutationResponse(
+        item=ItemResponse.from_domain(item, reminders),
+        events=[EventResponse.from_domain(event) for event in events],
+    )
+
+
+@router.post("/{item_id}/complete", response_model=ItemMutationResponse)
+async def complete_item(
+    item_id: str,
+    identity: IdentityDependency,
+    app: AppDependency,
+) -> ItemMutationResponse:
+    """Mark a todo item as completed."""
+
+    try:
+        item, events = app.complete_item(identity, item_id)
+    except ApplicationError as error:
+        raise http_error(error) from error
+
+    reminders = [reminder for reminder in app.list_reminders(identity) if reminder.item_id == item.id]
+    return ItemMutationResponse(
+        item=ItemResponse.from_domain(item, reminders),
+        events=[EventResponse.from_domain(event) for event in events],
+    )
+
+
+@router.post("/{item_id}/cancel-complete", response_model=ItemMutationResponse)
+async def cancel_complete_item(
+    item_id: str,
+    identity: IdentityDependency,
+    app: AppDependency,
+) -> ItemMutationResponse:
+    """Move a completed todo item back to active."""
+
+    try:
+        item, events = app.update_item(identity, item_id, status=ItemStatus.ACTIVE)
+    except ApplicationError as error:
+        raise http_error(error) from error
+
+    reminders = [reminder for reminder in app.list_reminders(identity) if reminder.item_id == item.id]
+    return ItemMutationResponse(
+        item=ItemResponse.from_domain(item, reminders),
+        events=[EventResponse.from_domain(event) for event in events],
+    )
+
+
+@router.delete("/{item_id}", response_model=ItemMutationResponse)
+async def delete_item(
+    item_id: str,
+    identity: IdentityDependency,
+    app: AppDependency,
+) -> ItemMutationResponse:
+    """Mark an item as deleted."""
+
+    try:
+        item, events = app.delete_item(identity, item_id)
+    except ApplicationError as error:
+        raise http_error(error) from error
+
+    return ItemMutationResponse(
         item=ItemResponse.from_domain(item, []),
         events=[EventResponse.from_domain(event) for event in events],
     )

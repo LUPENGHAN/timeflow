@@ -187,6 +187,24 @@ class ItemCreateResponse(BaseModel):
     events: list[EventResponse]
 
 
+class ItemUpdateRequest(BaseModel):
+    """Update editable calendar/todo fields."""
+
+    title: str | None = None
+    description: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    due_at: datetime | None = None
+    place_text: str | None = None
+
+
+class ItemMutationResponse(BaseModel):
+    """Updated item response."""
+
+    item: ItemResponse
+    events: list[EventResponse]
+
+
 class ReminderResponse(BaseModel):
     """Reminder response bound to an item."""
 
