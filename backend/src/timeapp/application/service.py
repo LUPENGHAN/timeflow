@@ -593,6 +593,31 @@ class TimeflowApplication:
     ) -> tuple[Item, list[DomainEvent]]:
         """Update an existing item and emit a domain event."""
 
+        changes: dict[str, Any] = {}
+        if title is not None:
+            changes["title"] = title
+        if description is not None:
+            changes["description"] = description
+        if start_at is not None:
+            changes["start_at"] = start_at
+        if end_at is not None:
+            changes["end_at"] = end_at
+        if due_at is not None:
+            changes["due_at"] = due_at
+        if place_text is not None:
+            changes["place_text"] = place_text
+        if status is not None:
+            changes["status"] = status
+        return self.update_item_fields(identity, item_id, changes)
+
+    def update_item_fields(
+        self,
+        identity: Identity,
+        item_id: str,
+        changes: dict[str, Any],
+    ) -> tuple[Item, list[DomainEvent]]:
+        """Update only explicitly provided item fields and emit a domain event."""
+
         item = self.store.get_item(item_id)
         if item is None or item.user_id != identity.user_id:
             raise ApplicationError(
@@ -600,20 +625,31 @@ class TimeflowApplication:
                 f"Item {item_id} was not found.",
             )
 
-        if title is not None:
+        if "title" in changes:
+            title = self._optional_str(changes.get("title"))
+            if title is None:
+                raise ApplicationError(
+                    ErrorCode.MISSING_REQUIRED_FIELD,
+                    "Item title cannot be empty.",
+                )
             item.title = title
-        if description is not None:
-            item.description = description
-        if start_at is not None:
-            item.start_at = start_at
-        if end_at is not None:
-            item.end_at = end_at
-        if due_at is not None:
-            item.due_at = due_at
-        if place_text is not None:
-            item.place_text = place_text
-        if status is not None:
-            item.status = status
+        if "description" in changes:
+            item.description = self._nullable_str(changes.get("description"))
+        if "start_at" in changes:
+            item.start_at = self._nullable_datetime(changes.get("start_at"))
+        if "end_at" in changes:
+            item.end_at = self._nullable_datetime(changes.get("end_at"))
+        if "due_at" in changes:
+            item.due_at = self._nullable_datetime(changes.get("due_at"))
+        if "place_text" in changes:
+            item.place_text = self._nullable_str(changes.get("place_text"))
+        if "status" in changes:
+            status_value = changes.get("status")
+            item.status = (
+                status_value
+                if isinstance(status_value, ItemStatus)
+                else ItemStatus(str(status_value))
+            )
         item.version += 1
         item.updated_at = datetime.now(UTC)
         self.store.update_item(item)
@@ -862,15 +898,10 @@ class TimeflowApplication:
             if not isinstance(changes, dict):
                 changes = {}
             if mode == "update":
-                _, item_events = self.update_item(
+                _, item_events = self.update_item_fields(
                     write_request.identity,
                     target_id,
-                    title=self._optional_str(changes.get("title")),
-                    description=self._optional_str(changes.get("description")),
-                    start_at=self._optional_datetime(changes.get("start_at")),
-                    end_at=self._optional_datetime(changes.get("end_at")),
-                    due_at=self._optional_datetime(changes.get("due_at")),
-                    place_text=self._optional_str(changes.get("place_text")),
+                    changes,
                 )
             elif mode == "complete":
                 _, item_events = self.complete_item(write_request.identity, target_id)
@@ -957,6 +988,21 @@ class TimeflowApplication:
 
     def _optional_str(self, value: Any) -> str | None:
         return value if isinstance(value, str) and value else None
+
+    def _nullable_datetime(self, value: Any) -> datetime | None:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        return self._optional_datetime(value)
+
+    def _nullable_str(self, value: Any) -> str | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return None
 
     def _item_payload(self, item: Item) -> dict[str, Any]:
         return {

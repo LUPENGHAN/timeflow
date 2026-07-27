@@ -134,3 +134,58 @@ def test_write_request_can_restore_completed_item() -> None:
         assert items[0]["status"] == "active"
 
     app.dependency_overrides.clear()
+
+
+def test_write_request_can_update_item_fields_and_clear_nullable_values() -> None:
+    """Manual edits go through confirmation and can clear nullable item fields."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/items",
+            json={
+                "type": "todo",
+                "title": "买牛奶",
+                "description": "低脂",
+                "place_text": "超市",
+            },
+        )
+        assert created.status_code == 200
+        item_id = created.json()["item"]["id"]
+
+        request = client.post(
+            "/api/v1/write-requests",
+            json={
+                "source_command_id": f"manual-{item_id}-update",
+                "candidate_payload": {
+                    "operation": "update_item",
+                    "target_id": item_id,
+                    "item": {"title": "买燕麦奶", "type": "todo"},
+                    "operations": [
+                        {
+                            "op": "update_item",
+                            "target_id": item_id,
+                            "changes": {
+                                "title": "买燕麦奶",
+                                "description": None,
+                                "place_text": None,
+                            },
+                        }
+                    ],
+                },
+            },
+        )
+        assert request.status_code == 200
+        write_request_id = request.json()["write_request"]["id"]
+
+        confirmed = client.post(f"/api/v1/write-requests/{write_request_id}/confirm")
+        assert confirmed.status_code == 200
+
+        items = client.get("/api/v1/items").json()
+        assert items[0]["title"] == "买燕麦奶"
+        assert items[0]["description"] is None
+        assert items[0]["place_text"] is None
+
+    app.dependency_overrides.clear()

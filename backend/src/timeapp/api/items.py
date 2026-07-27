@@ -88,15 +88,10 @@ async def update_item(
     """Update editable fields on a calendar or todo item."""
 
     try:
-        item, events = app.update_item(
+        item, events = app.update_item_fields(
             identity=identity,
             item_id=item_id,
-            title=request.title,
-            description=request.description,
-            start_at=request.start_at,
-            end_at=request.end_at,
-            due_at=request.due_at,
-            place_text=request.place_text,
+            changes=request.model_dump(exclude_unset=True),
         )
     except ApplicationError as error:
         raise http_error(error) from error

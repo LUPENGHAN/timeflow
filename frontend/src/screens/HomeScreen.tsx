@@ -25,9 +25,19 @@ type SocketState = 'connecting' | 'connected' | 'closed';
 type ManualOperation =
   | 'create_todo'
   | 'create_calendar_event'
+  | 'update_item'
   | 'complete_item'
   | 'cancel_complete_item'
   | 'delete_item';
+
+type EditDraft = {
+  title: string;
+  description: string;
+  start_at: string;
+  end_at: string;
+  due_at: string;
+  place_text: string;
+};
 
 export function HomeScreen() {
   const [connection, setConnection] = useState<ConnectionState>('checking');
@@ -44,6 +54,9 @@ export function HomeScreen() {
   const [voiceTranscript, setVoiceTranscript] = useState('到家后提醒我取快递');
   const [voiceResult, setVoiceResult] = useState<VoiceCommandResult | null>(null);
   const [voiceBusy, setVoiceBusy] = useState(false);
+  const [editItem, setEditItem] = useState<Item | null>(null);
+  const [editDraft, setEditDraft] = useState<EditDraft>(emptyEditDraft());
+  const [editBusy, setEditBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     const [itemResponse, pendingResponse] = await Promise.all([
@@ -182,6 +195,75 @@ export function HomeScreen() {
       setBanner('已生成待确认写入');
     } catch {
       setBanner('创建确认请求失败');
+    }
+  }
+
+  function handleOpenEdit(item: Item) {
+    setEditItem(item);
+    setEditDraft({
+      description: item.description ?? '',
+      due_at: toInputDateTime(item.due_at),
+      end_at: toInputDateTime(item.end_at),
+      place_text: item.place_text ?? '',
+      start_at: toInputDateTime(item.start_at),
+      title: item.title,
+    });
+  }
+
+  async function handlePrepareEditItem() {
+    if (!editItem || !editDraft.title.trim() || editBusy) {
+      return;
+    }
+
+    setEditBusy(true);
+    setBanner(null);
+    try {
+      const dueAt = normalizeInputDateTime(editDraft.due_at);
+      const endAt = normalizeInputDateTime(editDraft.end_at);
+      const startAt = normalizeInputDateTime(editDraft.start_at);
+
+      await createWriteRequest({
+        source_command_id: `manual-edit-${editItem.id}-${Date.now()}`,
+        candidate_payload: {
+          item: {
+            description: editDraft.description.trim() || null,
+            due_at: dueAt,
+            end_at: endAt,
+            place_text: editDraft.place_text.trim() || null,
+            start_at: startAt,
+            title: editDraft.title.trim(),
+            type: editItem.type,
+          },
+          operation: 'update_item',
+          operations: [
+            {
+              changes: {
+                description: editDraft.description.trim() || null,
+                due_at: dueAt,
+                end_at: endAt,
+                place_text: editDraft.place_text.trim() || null,
+                start_at: startAt,
+                title: editDraft.title.trim(),
+              },
+              op: 'update_item',
+              target_id: editItem.id,
+            },
+          ],
+          source_text: 'manual edit',
+          target_id: editItem.id,
+        },
+      });
+      setEditItem(null);
+      await refresh();
+      setBanner('已生成待确认写入');
+    } catch (error) {
+      setBanner(
+        error instanceof Error && error.message === 'invalid datetime'
+          ? '时间格式不正确'
+          : '创建确认请求失败',
+      );
+    } finally {
+      setEditBusy(false);
     }
   }
 
@@ -375,7 +457,12 @@ export function HomeScreen() {
             </View>
           ) : (
             visibleItems.map((item) => (
-              <ItemRow key={item.id} item={item} onPrepareOperation={handlePrepareItemOperation} />
+              <ItemRow
+                key={item.id}
+                item={item}
+                onEdit={handleOpenEdit}
+                onPrepareOperation={handlePrepareItemOperation}
+              />
             ))
           )}
         </View>
@@ -395,6 +482,16 @@ export function HomeScreen() {
         transcript={voiceTranscript}
         visible={voiceOpen}
         onTranscriptChange={setVoiceTranscript}
+      />
+
+      <EditSheet
+        busy={editBusy}
+        draft={editDraft}
+        item={editItem}
+        onClose={() => setEditItem(null)}
+        onChangeDraft={setEditDraft}
+        onSubmit={handlePrepareEditItem}
+        visible={editItem !== null}
       />
     </View>
   );
@@ -428,9 +525,11 @@ function Metric({ label, value }: { label: string; value: number }) {
 
 function ItemRow({
   item,
+  onEdit,
   onPrepareOperation,
 }: {
   item: Item;
+  onEdit: (item: Item) => void;
   onPrepareOperation: (item: Item, operation: ManualOperation) => void;
 }) {
   const completed = item.status === 'completed';
@@ -459,6 +558,9 @@ function ItemRow({
         ) : null}
       </View>
       <View style={styles.rowActions}>
+        <Pressable onPress={() => onEdit(item)} style={styles.smallButton}>
+          <Text style={styles.smallButtonText}>编辑</Text>
+        </Pressable>
         {item.type === 'todo' ? (
           <Pressable
             onPress={() =>
@@ -609,6 +711,95 @@ function VoiceSheet({
   );
 }
 
+function EditSheet({
+  busy,
+  draft,
+  item,
+  onChangeDraft,
+  onClose,
+  onSubmit,
+  visible,
+}: {
+  busy: boolean;
+  draft: EditDraft;
+  item: Item | null;
+  onChangeDraft: (value: EditDraft) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+  visible: boolean;
+}) {
+  return (
+    <Modal animationType="slide" visible={visible}>
+      <View style={styles.modalRoot}>
+        <ScrollView contentContainerStyle={styles.modalContent}>
+          <View style={styles.topBar}>
+            <View>
+              <Text style={styles.kicker}>事项编辑</Text>
+              <Text style={styles.title}>修改内容</Text>
+            </View>
+            <Pressable onPress={onClose} style={styles.secondaryButton}>
+              <Text style={styles.secondaryButtonText}>关闭</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.sheetSection}>
+            <Text style={styles.sectionTitle}>{item?.type === 'todo' ? '待办' : '日历'}</Text>
+            <TextInput
+              onChangeText={(value) => onChangeDraft({ ...draft, title: value })}
+              placeholder="标题"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              value={draft.title}
+            />
+            <TextInput
+              multiline
+              onChangeText={(value) => onChangeDraft({ ...draft, description: value })}
+              placeholder="备注"
+              placeholderTextColor={colors.muted}
+              style={styles.textArea}
+              value={draft.description}
+            />
+            <TextInput
+              onChangeText={(value) => onChangeDraft({ ...draft, place_text: value })}
+              placeholder="地点"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              value={draft.place_text}
+            />
+            <TextInput
+              onChangeText={(value) => onChangeDraft({ ...draft, start_at: value })}
+              placeholder="开始时间"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              value={draft.start_at}
+            />
+            <TextInput
+              onChangeText={(value) => onChangeDraft({ ...draft, end_at: value })}
+              placeholder="结束时间"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              value={draft.end_at}
+            />
+            <TextInput
+              onChangeText={(value) => onChangeDraft({ ...draft, due_at: value })}
+              placeholder="截止时间"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              value={draft.due_at}
+            />
+            <Pressable
+              onPress={onSubmit}
+              style={[styles.primaryButton, busy && styles.disabledButton]}
+            >
+              <Text style={styles.primaryButtonText}>{busy ? '生成中' : '生成确认'}</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
+      </View>
+    </Modal>
+  );
+}
+
 function itemSummary(item: Item) {
   if (item.start_at) {
     return `开始 ${formatDate(item.start_at)}${item.place_text ? ` · ${item.place_text}` : ''}`;
@@ -660,6 +851,9 @@ function manualOperationLabel(operation: string) {
   if (operation === 'create_calendar_event') {
     return '新增日历';
   }
+  if (operation === 'update_item') {
+    return '编辑事项';
+  }
   if (operation === 'complete_item') {
     return '完成待办';
   }
@@ -686,6 +880,33 @@ function statusLabel(status: string) {
     return '已提醒';
   }
   return status;
+}
+
+function emptyEditDraft(): EditDraft {
+  return {
+    description: '',
+    due_at: '',
+    end_at: '',
+    place_text: '',
+    start_at: '',
+    title: '',
+  };
+}
+
+function toInputDateTime(value: string | null) {
+  return value ? value.slice(0, 16) : '';
+}
+
+function normalizeInputDateTime(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = new Date(trimmed);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error('invalid datetime');
+  }
+  return parsed.toISOString();
 }
 
 const styles = StyleSheet.create({
