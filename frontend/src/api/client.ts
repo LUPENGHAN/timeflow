@@ -159,6 +159,22 @@ export function createWriteRequest(input: {
   });
 }
 
+export function updateWriteRequest(
+  writeRequestId: string,
+  input: {
+    candidate_payload: Record<string, unknown>;
+  },
+) {
+  return apiFetch<{ write_request: WriteRequest; events: EventMessage[] }>(
+    `/write-requests/${writeRequestId}`,
+    {
+      body: JSON.stringify(input),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'PATCH',
+    },
+  );
+}
+
 export function listItems() {
   return apiFetch<Item[]>('/items');
 }

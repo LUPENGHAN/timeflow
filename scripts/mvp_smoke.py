@@ -135,6 +135,54 @@ def main() -> None:
             )
             expect(update_confirm.status_code == 200, "voice update confirm")
 
+        modify_wr = post_json(
+            client,
+            "/api/v1/write-requests",
+            {
+                "source_command_id": "smoke-modify",
+                "candidate_payload": {
+                    "operation": "update_item",
+                    "target_id": todo["id"],
+                    "item": {"title": todo["title"], "type": todo["type"]},
+                },
+            },
+        )["write_request"]
+        edited_title = "买牛奶 - edited"
+        patch = client.patch(
+            f"/api/v1/write-requests/{modify_wr['id']}",
+            json={
+                "candidate_payload": {
+                    **modify_wr["candidate_payload"],
+                    "item": {"title": edited_title, "type": todo["type"]},
+                    "operations": [
+                        {
+                            "changes": {"title": edited_title},
+                            "op": "update_item",
+                            "target_id": todo["id"],
+                        }
+                    ],
+                }
+            },
+        )
+        expect(patch.status_code == 200, "write request edit returned 200")
+        expect(
+            patch.json()["write_request"]["payload_hash"] != modify_wr["payload_hash"],
+            "write request edit refreshed payload hash",
+        )
+        expect(
+            client.post(f"/api/v1/write-requests/{modify_wr['id']}/confirm").status_code
+            == 200,
+            "manual modify through edited write request",
+        )
+        modified_todo = next(
+            item
+            for item in client.get("/api/v1/items").json()
+            if item["id"] == todo["id"]
+        )
+        expect(
+            modified_todo["title"] == edited_title, "edited write request changed item"
+        )
+
         complete_wr = post_json(
             client,
             "/api/v1/write-requests",

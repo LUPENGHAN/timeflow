@@ -217,6 +217,33 @@ class TimeflowApplication:
         self.store.add_events(events)
         return ConfirmationResult(write_request, events)
 
+    def update_write_request(
+        self,
+        write_request_id: str,
+        identity: Identity,
+        candidate_payload: dict[str, Any],
+    ) -> ConfirmationResult:
+        """Edit a pending write request without applying business facts."""
+
+        write_request = self._load_pending_request(write_request_id, identity)
+        write_request.candidate_payload = candidate_payload
+        write_request.payload_hash = self._payload_hash(candidate_payload)
+        write_request.updated_at = datetime.now(UTC)
+        events = [
+            self._event(
+                DomainEventType.WRITE_REQUEST_UPDATED,
+                "write_request",
+                write_request.id,
+                {
+                    "status": write_request.status.value,
+                    "candidate_payload": write_request.candidate_payload,
+                    "payload_hash": write_request.payload_hash,
+                },
+            )
+        ]
+        self.store.add_events(events)
+        return ConfirmationResult(write_request, events)
+
     def list_items(self, identity: Identity) -> list[Item]:
         """List user's calendar/todo items."""
 

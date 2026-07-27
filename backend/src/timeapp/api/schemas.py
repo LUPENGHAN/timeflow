@@ -128,6 +128,12 @@ class WriteRequestCreateResponse(BaseModel):
     events: list[EventResponse]
 
 
+class WriteRequestUpdateRequest(BaseModel):
+    """Update editable pending write-request payload fields."""
+
+    candidate_payload: dict[str, Any]
+
+
 class ItemResponse(BaseModel):
     """Calendar/todo item response."""
 

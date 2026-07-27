@@ -18,6 +18,7 @@ import {
   listPlaces,
   listRepeatRules,
   rejectWriteRequest,
+  updateWriteRequest,
   type Item,
   type Place,
   type Reminder,
@@ -57,6 +58,7 @@ export function HomeScreen() {
     candidate_payload: Record<string, unknown>;
   } | null>(null);
   const [pendingWriteLabel, setPendingWriteLabel] = useState<string | null>(null);
+  const [pendingDraftTitle, setPendingDraftTitle] = useState('');
   const [placeLabel, setPlaceLabel] = useState('');
   const [placeType, setPlaceType] = useState<Place['place_type']>('home');
   const [placeSubmitting, setPlaceSubmitting] = useState(false);
@@ -302,8 +304,16 @@ export function HomeScreen() {
     }
   }
 
-  async function handlePrepareItemAction(item: Item, operation: 'complete_item' | 'delete_item') {
-    const label = operation === 'complete_item' ? 'Complete item' : 'Delete item';
+  async function handlePrepareItemAction(
+    item: Item,
+    operation: 'update_item' | 'complete_item' | 'delete_item',
+  ) {
+    const label =
+      operation === 'update_item'
+        ? 'Modify item'
+        : operation === 'complete_item'
+          ? 'Complete item'
+          : 'Delete item';
     setBanner(null);
     try {
       const result = await createWriteRequest({
@@ -328,9 +338,42 @@ export function HomeScreen() {
         id: result.write_request.id,
       });
       setPendingWriteLabel(`${label}: ${item.title}`);
+      setPendingDraftTitle(item.title);
       setBanner(null);
     } catch {
       setBanner('Failed to prepare write request');
+    }
+  }
+
+  async function handleSelectVoiceCandidate(candidate: Item) {
+    setSelectedVoiceCandidateId(candidate.id);
+    setVoiceStatus(`Selected ${candidate.title}`);
+    try {
+      const result = await createWriteRequest({
+        source_command_id: voiceResult?.voice_command.command_id ?? `voice-${candidate.id}`,
+        candidate_payload: {
+          item: {
+            description: candidate.description,
+            due_at: candidate.due_at,
+            end_at: candidate.end_at,
+            place_text: candidate.place_text,
+            start_at: candidate.start_at,
+            title: candidate.title,
+            type: candidate.type,
+          },
+          operation: 'update_item',
+          source_text: voiceTranscript,
+          target_id: candidate.id,
+        },
+      });
+      setPendingWriteRequest({
+        candidate_payload: result.write_request.candidate_payload,
+        id: result.write_request.id,
+      });
+      setPendingWriteLabel(`Modify item: ${candidate.title}`);
+      setPendingDraftTitle(candidate.title);
+    } catch {
+      setVoiceStatus('Candidate selection failed');
     }
   }
 
@@ -418,11 +461,33 @@ export function HomeScreen() {
     }
 
     try {
+      const operation = pendingWriteRequest.candidate_payload.operation;
+      if (operation === 'update_item' && pendingDraftTitle.trim()) {
+        const targetId = String(pendingWriteRequest.candidate_payload.target_id ?? '');
+        const editedPayload = {
+          ...pendingWriteRequest.candidate_payload,
+          item: {
+            ...(pendingWriteRequest.candidate_payload.item as Record<string, unknown>),
+            title: pendingDraftTitle.trim(),
+          },
+          operations: [
+            {
+              changes: { title: pendingDraftTitle.trim() },
+              op: 'update_item',
+              target_id: targetId,
+            },
+          ],
+        };
+        await updateWriteRequest(pendingWriteRequest.id, {
+          candidate_payload: editedPayload,
+        });
+      }
       await confirmWriteRequest(pendingWriteRequest.id);
       await refreshItems();
       setBanner('Item updated');
       setPendingWriteRequest(null);
       setPendingWriteLabel(null);
+      setPendingDraftTitle('');
     } catch {
       setBanner('Confirm failed');
     }
@@ -437,6 +502,7 @@ export function HomeScreen() {
       await rejectWriteRequest(pendingWriteRequest.id);
       setPendingWriteRequest(null);
       setPendingWriteLabel(null);
+      setPendingDraftTitle('');
       setBanner('Action cancelled');
     } catch {
       setBanner('Cancel failed');
@@ -715,6 +781,12 @@ export function HomeScreen() {
                 </View>
                 <View style={styles.inlineActions}>
                   <Pressable
+                    onPress={() => handlePrepareItemAction(item, 'update_item')}
+                    style={styles.inlineActionButton}
+                  >
+                    <Text style={styles.inlineActionText}>Modify</Text>
+                  </Pressable>
+                  <Pressable
                     onPress={() => handlePrepareItemAction(item, 'delete_item')}
                     style={styles.inlineActionButton}
                   >
@@ -744,6 +816,12 @@ export function HomeScreen() {
                 </View>
                 <View style={styles.inlineActions}>
                   <Pressable
+                    onPress={() => handlePrepareItemAction(todo, 'update_item')}
+                    style={styles.inlineActionButton}
+                  >
+                    <Text style={styles.inlineActionText}>Modify</Text>
+                  </Pressable>
+                  <Pressable
                     onPress={() => handlePrepareItemAction(todo, 'complete_item')}
                     style={styles.inlineActionButton}
                   >
@@ -771,6 +849,15 @@ export function HomeScreen() {
               ? String(pendingWriteRequest.candidate_payload.operation ?? 'pending')
               : 'Reminder when arriving home'}
           </Text>
+          {pendingWriteRequest?.candidate_payload.operation === 'update_item' ? (
+            <TextInput
+              value={pendingDraftTitle}
+              onChangeText={setPendingDraftTitle}
+              placeholder="Edit title before confirm"
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+            />
+          ) : null}
           <View style={styles.actions}>
             <Pressable onPress={handleRejectPendingWriteRequest} style={styles.secondaryButton}>
               <Text style={styles.secondaryButtonText}>Cancel</Text>
@@ -840,8 +927,7 @@ export function HomeScreen() {
                     <Pressable
                       key={candidate.id}
                       onPress={() => {
-                        setSelectedVoiceCandidateId(candidate.id);
-                        setVoiceStatus(`Selected ${candidate.title}`);
+                        void handleSelectVoiceCandidate(candidate);
                       }}
                       style={[
                         styles.candidateRow,

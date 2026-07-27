@@ -12,6 +12,7 @@ from timeapp.api.schemas import (
     WriteRequestCreateRequest,
     WriteRequestCreateResponse,
     WriteRequestResponse,
+    WriteRequestUpdateRequest,
 )
 from timeapp.application.service import ApplicationError, TimeflowApplication
 from timeapp.domain.models import Identity
@@ -37,6 +38,30 @@ async def create_write_request(
     return WriteRequestCreateResponse(
         write_request=WriteRequestResponse.from_domain(write_request),
         events=[EventResponse.from_domain(event) for event in events],
+    )
+
+
+@router.patch("/{write_request_id}", response_model=ConfirmationResponse)
+async def update_write_request(
+    write_request_id: str,
+    request: WriteRequestUpdateRequest,
+    identity: IdentityDependency,
+    app: AppDependency,
+) -> ConfirmationResponse:
+    """Edit a pending write request without applying it."""
+
+    try:
+        result = app.update_write_request(
+            write_request_id,
+            identity,
+            request.candidate_payload,
+        )
+    except ApplicationError as error:
+        raise http_error(error) from error
+
+    return ConfirmationResponse(
+        write_request=WriteRequestResponse.from_domain(result.write_request),
+        events=[EventResponse.from_domain(event) for event in result.events],
     )
 
 
