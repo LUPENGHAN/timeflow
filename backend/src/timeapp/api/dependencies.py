@@ -1,11 +1,11 @@
 """Shared FastAPI dependencies."""
 
 from collections.abc import Generator
-from functools import lru_cache
 
 from sqlalchemy.orm import Session
 
 from timeapp.application.service import TimeflowApplication
+from timeapp.application.store import SqlAlchemyStore
 from timeapp.core.db import SessionLocal
 from timeapp.domain.models import Identity
 
@@ -20,15 +20,18 @@ def get_db() -> Generator[Session, None, None]:
         session.close()
 
 
-@lru_cache
-def get_timeflow_app() -> TimeflowApplication:
+def get_timeflow_app() -> Generator[TimeflowApplication, None, None]:
     """Return the process-local application service.
 
-    Repository-backed storage can replace this dependency without changing the
-    HTTP or WebSocket routes.
+    The API runtime uses the configured SQLAlchemy database. Tests can override
+    this dependency with an in-memory application instance.
     """
 
-    return TimeflowApplication()
+    session = SessionLocal()
+    try:
+        yield TimeflowApplication(SqlAlchemyStore(session))
+    finally:
+        session.close()
 
 
 def get_identity() -> Identity:

@@ -26,7 +26,7 @@ async def list_items(
 
     items = app.list_items(identity)
     reminders_by_item: dict[str, list[Reminder]] = {}
-    for reminder in app.store.reminders.values():
+    for reminder in app.list_reminders(identity):
         reminders_by_item.setdefault(reminder.item_id, []).append(reminder)
 
     return [

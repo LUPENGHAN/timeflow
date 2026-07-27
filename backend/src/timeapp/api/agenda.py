@@ -22,11 +22,7 @@ async def get_agenda(
     """Return a single-panel agenda projection for the current user."""
 
     items = app.list_items(identity)
-    reminders = [
-        reminder
-        for reminder in app.store.reminders.values()
-        if reminder.user_id == identity.user_id
-    ]
+    reminders = app.list_reminders(identity)
     return AgendaResponse(
         items=[
             ItemResponse.from_domain(item)

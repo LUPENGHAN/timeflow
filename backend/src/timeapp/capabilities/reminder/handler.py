@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from timeapp.application.store import InMemoryStore
+from timeapp.application.store import InMemoryStore, SqlAlchemyStore
 from timeapp.domain.enums import (
     DomainEventType,
     ReminderPriority,
@@ -20,7 +20,7 @@ class ReminderCapability:
     def apply(
         self,
         write_request: WriteRequest,
-        store: InMemoryStore,
+        store: InMemoryStore | SqlAlchemyStore,
         item_id: str,
     ) -> list[DomainEvent]:
         """Create reminders from the confirmed candidate payload."""

@@ -3,13 +3,16 @@
 from fastapi.testclient import TestClient
 
 from timeapp.api.dependencies import get_timeflow_app
+from timeapp.application.service import TimeflowApplication
+from timeapp.application.store import InMemoryStore
 from timeapp.main import app
 
 
 def test_voice_command_creates_and_confirms_todo_reminder() -> None:
     """Voice input must stop at confirmation before creating items/reminders."""
 
-    get_timeflow_app.cache_clear()
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
 
     with TestClient(app) as client:
         voice_response = client.post(
@@ -41,12 +44,14 @@ def test_voice_command_creates_and_confirms_todo_reminder() -> None:
         assert items[0]["type"] == "todo"
         assert items[0]["title"] == "取快递"
         assert items[0]["reminders"][0]["trigger_type"] == "enter_place"
+    app.dependency_overrides.clear()
 
 
 def test_events_endpoint_returns_cursor_sync_events() -> None:
     """HTTP sync should expose domain events with a cursor."""
 
-    get_timeflow_app.cache_clear()
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
 
     with TestClient(app) as client:
         response = client.post("/api/v1/voice/commands", json={"transcript": "记得买牛奶"})
@@ -60,3 +65,4 @@ def test_events_endpoint_returns_cursor_sync_events() -> None:
             "command.status.changed",
             "write_request.created",
         ]
+    app.dependency_overrides.clear()

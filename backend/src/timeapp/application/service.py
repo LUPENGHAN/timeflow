@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from timeapp.application.parser import MockCommandParser
 from timeapp.application.reference_resolver import ReferenceResolver
-from timeapp.application.store import InMemoryStore
+from timeapp.application.store import InMemoryStore, SqlAlchemyStore
 from timeapp.capabilities.calendar.handler import CalendarCapability
 from timeapp.capabilities.reminder.handler import ReminderCapability
 from timeapp.capabilities.todo.handler import TodoCapability
@@ -73,7 +73,7 @@ class ConfirmationResult:
 class TimeflowApplication:
     """Explicit application orchestration shared by HTTP and WS entrypoints."""
 
-    def __init__(self, store: InMemoryStore | None = None) -> None:
+    def __init__(self, store: InMemoryStore | SqlAlchemyStore | None = None) -> None:
         self.store = store or InMemoryStore()
         self.parser = MockCommandParser()
         self.reference_resolver = ReferenceResolver()
@@ -115,6 +115,7 @@ class TimeflowApplication:
             if not candidates:
                 voice_command.status = VoiceCommandStatus.NEEDS_CLARIFICATION
                 voice_command.updated_at = datetime.now(UTC)
+                self.store.update_voice_command(voice_command)
                 events.append(
                     self._event(
                         DomainEventType.COMMAND_STATUS_CHANGED,
@@ -189,6 +190,7 @@ class TimeflowApplication:
         events = self._apply_write_request(write_request)
         write_request.status = WriteRequestStatus.APPLIED
         write_request.updated_at = datetime.now(UTC)
+        self.store.update_write_request(write_request)
         events.append(
             self._event(
                 DomainEventType.WRITE_REQUEST_APPLIED,
@@ -206,6 +208,7 @@ class TimeflowApplication:
         write_request = self._load_pending_request(write_request_id, identity)
         write_request.status = WriteRequestStatus.REJECTED
         write_request.updated_at = datetime.now(UTC)
+        self.store.update_write_request(write_request)
         events = [
             self._event(
                 DomainEventType.WRITE_REQUEST_REJECTED,
@@ -229,6 +232,7 @@ class TimeflowApplication:
         write_request.candidate_payload = candidate_payload
         write_request.payload_hash = self._payload_hash(candidate_payload)
         write_request.updated_at = datetime.now(UTC)
+        self.store.update_write_request(write_request)
         events = [
             self._event(
                 DomainEventType.WRITE_REQUEST_UPDATED,

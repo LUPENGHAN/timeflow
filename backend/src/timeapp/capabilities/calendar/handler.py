@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
-from timeapp.application.store import InMemoryStore
+from timeapp.application.store import InMemoryStore, SqlAlchemyStore
 from timeapp.domain.enums import DomainEventType, ItemType
 from timeapp.domain.models import DomainEvent, Item, WriteRequest, utc_now
 
@@ -12,7 +12,11 @@ from timeapp.domain.models import DomainEvent, Item, WriteRequest, utc_now
 class CalendarCapability:
     """Create calendar events after the confirmation gate has approved them."""
 
-    def apply(self, write_request: WriteRequest, store: InMemoryStore) -> list[DomainEvent]:
+    def apply(
+        self,
+        write_request: WriteRequest,
+        store: InMemoryStore | SqlAlchemyStore,
+    ) -> list[DomainEvent]:
         """Create a calendar item and emit an item-created event."""
 
         item_payload = write_request.candidate_payload["item"]
