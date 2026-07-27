@@ -6,13 +6,17 @@ import {
   applyReminderAction,
   confirmWriteRequest,
   createWriteRequest,
+  createPlace,
   createVoiceCommand,
+  deletePlace,
   getHealth,
   getRealtimeUrl,
   listItems,
   listPendingWriteRequests,
+  listPlaces,
   rejectWriteRequest,
   type Item,
+  type Place,
   type Reminder,
   type VoiceCommandResult,
   type WriteRequest,
@@ -51,6 +55,7 @@ export function HomeScreen() {
   const [socketState, setSocketState] = useState<SocketState>('connecting');
   const [viewMode, setViewMode] = useState<ViewMode>('today');
   const [items, setItems] = useState<Item[]>([]);
+  const [places, setPlaces] = useState<Place[]>([]);
   const [pendingWrites, setPendingWrites] = useState<WriteRequest[]>([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -68,14 +73,22 @@ export function HomeScreen() {
   const [reminderDraft, setReminderDraft] = useState<ReminderDraft>(defaultReminderDraft());
   const [reminderBusy, setReminderBusy] = useState(false);
   const [actingReminderId, setActingReminderId] = useState<string | null>(null);
+  const [placeLabel, setPlaceLabel] = useState('家');
+  const [placeType, setPlaceType] = useState<Place['place_type']>('home');
+  const [placeRadius, setPlaceRadius] = useState('100');
+  const [placeDescription, setPlaceDescription] = useState('');
+  const [placeBusy, setPlaceBusy] = useState(false);
+  const [deletingPlaceId, setDeletingPlaceId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const [itemResponse, pendingResponse] = await Promise.all([
+    const [itemResponse, pendingResponse, placeResponse] = await Promise.all([
       listItems(),
       listPendingWriteRequests(),
+      listPlaces(),
     ]);
     setItems(itemResponse);
     setPendingWrites(pendingResponse);
+    setPlaces(placeResponse);
   }, []);
 
   useEffect(() => {
@@ -329,6 +342,56 @@ export function HomeScreen() {
     }
   }
 
+  async function handleCreatePlace() {
+    if (!placeLabel.trim() || placeBusy) {
+      return;
+    }
+
+    const radius = Number.parseInt(placeRadius, 10);
+    if (!Number.isFinite(radius) || radius <= 0) {
+      setBanner('半径不正确');
+      return;
+    }
+
+    setPlaceBusy(true);
+    setBanner(null);
+    try {
+      await createPlace({
+        accuracy_meters: null,
+        description: placeDescription.trim() || null,
+        label: placeLabel.trim(),
+        latitude: null,
+        longitude: null,
+        place_type: placeType,
+        radius_meters: radius,
+      });
+      await refresh();
+      setBanner('地点已保存');
+    } catch {
+      setBanner('保存地点失败');
+    } finally {
+      setPlaceBusy(false);
+    }
+  }
+
+  async function handleDeletePlace(place: Place) {
+    if (deletingPlaceId === place.id) {
+      return;
+    }
+
+    setDeletingPlaceId(place.id);
+    setBanner(null);
+    try {
+      await deletePlace(place.id);
+      await refresh();
+      setBanner('地点已删除');
+    } catch {
+      setBanner('删除地点失败');
+    } finally {
+      setDeletingPlaceId(null);
+    }
+  }
+
   async function handleReminderAction(reminder: Reminder, action: ReminderAction) {
     if (actingReminderId === reminder.id) {
       return;
@@ -442,6 +505,7 @@ export function HomeScreen() {
         <View style={styles.metricsRow}>
           <Metric label="日历" value={calendarItems.length} />
           <Metric label="待办" value={todoItems.length} />
+          <Metric label="地点" value={places.length} />
           <Metric label="待确认" value={pendingWrites.length} />
         </View>
 
@@ -508,6 +572,87 @@ export function HomeScreen() {
           >
             <Text style={styles.primaryButtonText}>{loading ? '生成中' : '生成确认'}</Text>
           </Pressable>
+        </View>
+
+        <View style={styles.placeSection}>
+          <View style={styles.quickAddHeader}>
+            <Text style={styles.sectionTitle}>地点库</Text>
+            <View style={styles.typeToggle}>
+              {(['home', 'work', 'custom', 'temporary_parking'] as const).map((type) => (
+                <Pressable
+                  key={type}
+                  onPress={() => setPlaceType(type)}
+                  style={[styles.typeButton, placeType === type && styles.typeButtonActive]}
+                >
+                  <Text
+                    style={[
+                      styles.typeButtonText,
+                      placeType === type && styles.typeButtonTextActive,
+                    ]}
+                  >
+                    {placeTypeLabel(type)}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          </View>
+          <TextInput
+            value={placeLabel}
+            onChangeText={setPlaceLabel}
+            placeholder="地点名称"
+            placeholderTextColor={colors.muted}
+            style={styles.input}
+          />
+          <TextInput
+            value={placeRadius}
+            onChangeText={setPlaceRadius}
+            placeholder="触发半径，默认 100"
+            placeholderTextColor={colors.muted}
+            style={styles.input}
+            keyboardType="number-pad"
+          />
+          <TextInput
+            value={placeDescription}
+            onChangeText={setPlaceDescription}
+            placeholder="文字描述，可选"
+            placeholderTextColor={colors.muted}
+            style={styles.input}
+          />
+          <Pressable
+            onPress={handleCreatePlace}
+            style={[styles.primaryButton, placeBusy && styles.disabledButton]}
+          >
+            <Text style={styles.primaryButtonText}>{placeBusy ? '保存中' : '保存地点'}</Text>
+          </Pressable>
+
+          {places.length > 0 ? (
+            <View style={styles.placeList}>
+              {places.map((place) => (
+                <View key={place.id} style={styles.placeRow}>
+                  <View style={styles.placeBody}>
+                    <View style={styles.itemHeader}>
+                      <Text style={styles.itemTitle}>{place.label}</Text>
+                      <Text style={styles.itemKind}>{placeTypeLabel(place.place_type)}</Text>
+                    </View>
+                    <Text style={styles.placeMeta}>
+                      半径 {place.radius_meters}m
+                      {place.description ? ` · ${place.description}` : ''}
+                    </Text>
+                  </View>
+                  <View style={styles.rowActions}>
+                    <Pressable
+                      onPress={() => handleDeletePlace(place)}
+                      style={styles.smallButtonDanger}
+                    >
+                      <Text style={styles.smallButtonDangerText}>
+                        {deletingPlaceId === place.id ? '删除中' : '删除'}
+                      </Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : null}
         </View>
 
         {pendingWrites.length > 0 ? (
@@ -1226,6 +1371,19 @@ function priorityLabel(priority: ReminderDraft['priority']) {
   return '普通';
 }
 
+function placeTypeLabel(placeType: Place['place_type']) {
+  if (placeType === 'home') {
+    return '家';
+  }
+  if (placeType === 'work') {
+    return '公司';
+  }
+  if (placeType === 'temporary_parking') {
+    return '停车';
+  }
+  return '自定义';
+}
+
 function reminderActionSuccessLabel(action: ReminderAction) {
   if (action === 'snooze') {
     return '提醒已延后';
@@ -1492,6 +1650,32 @@ const styles = StyleSheet.create({
   },
   pendingSection: {
     gap: spacing.sm,
+  },
+  placeBody: {
+    flex: 1,
+    gap: 2,
+    minWidth: 0,
+  },
+  placeList: {
+    gap: spacing.md,
+    marginTop: spacing.sm,
+  },
+  placeMeta: {
+    color: colors.muted,
+    fontSize: 13,
+  },
+  placeRow: {
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+    padding: spacing.md,
+  },
+  placeSection: {
+    gap: spacing.md,
   },
   primaryButton: {
     alignItems: 'center',

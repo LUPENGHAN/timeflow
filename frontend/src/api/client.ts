@@ -298,6 +298,12 @@ export function createRepeatRule(input: {
   });
 }
 
+export function deletePlace(placeId: string) {
+  return apiFetch<{ place: Place }>(`/places/${placeId}`, {
+    method: 'DELETE',
+  });
+}
+
 export function createItem(input: {
   type: 'calendar_event' | 'todo';
   title: string;
