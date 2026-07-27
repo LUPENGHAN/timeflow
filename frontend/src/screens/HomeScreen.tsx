@@ -8,7 +8,7 @@ import {
   useAudioRecorderState,
 } from 'expo-audio';
 import * as Notifications from 'expo-notifications';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
@@ -218,7 +218,50 @@ export function HomeScreen() {
   );
   const todoItems = useMemo(() => items.filter((item) => item.type === 'todo'), [items]);
   const itemTitleById = useMemo(() => new Map(items.map((item) => [item.id, item.title])), [items]);
+  const processedNotificationIdsRef = useRef(new Set<string>());
   const visibleItems = useMemo(() => filterItemsByMode(items, viewMode), [items, viewMode]);
+
+  const markReminderDelivered = useCallback(
+    async (reminderId: string, notificationId: string | null) => {
+      const dedupeKey = notificationId ?? reminderId;
+      if (processedNotificationIdsRef.current.has(dedupeKey)) {
+        return;
+      }
+      processedNotificationIdsRef.current.add(dedupeKey);
+
+      try {
+        await applyReminderAction(reminderId, {
+          action: 'delivered',
+          local_notification_id: notificationId ?? undefined,
+        });
+        await refresh();
+      } catch {
+        // Keep the app moving; the reminder card already carries the current state.
+      }
+    },
+    [refresh],
+  );
+
+  useEffect(() => {
+    const receivedListener = Notifications.addNotificationReceivedListener((notification) => {
+      const reminderId = notification.request.content.data?.reminderId;
+      if (typeof reminderId === 'string') {
+        void markReminderDelivered(reminderId, notification.request.identifier);
+      }
+    });
+
+    const responseListener = Notifications.addNotificationResponseReceivedListener((response) => {
+      const reminderId = response.notification.request.content.data?.reminderId;
+      if (typeof reminderId === 'string') {
+        void markReminderDelivered(reminderId, response.notification.request.identifier);
+      }
+    });
+
+    return () => {
+      receivedListener.remove();
+      responseListener.remove();
+    };
+  }, [markReminderDelivered]);
 
   async function handlePrepareCreateItem() {
     if (!title.trim() || loading) {
