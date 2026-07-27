@@ -2,6 +2,7 @@
 
 from fastapi import APIRouter
 
+from timeapp.api.agenda import router as agenda_router
 from timeapp.api.events import router as events_router
 from timeapp.api.health import router as health_router
 from timeapp.api.items import router as items_router
@@ -13,6 +14,7 @@ from timeapp.basic.usage_management.router import router as usage_management_rou
 
 api_router = APIRouter()
 api_router.include_router(health_router)
+api_router.include_router(agenda_router)
 api_router.include_router(voice_router)
 api_router.include_router(write_requests_router)
 api_router.include_router(items_router)

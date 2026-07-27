@@ -165,3 +165,10 @@ class EventListResponse(BaseModel):
 
     next_cursor: int
     events: list[EventResponse]
+
+
+class AgendaResponse(BaseModel):
+    """Single-panel agenda projection."""
+
+    items: list[ItemResponse] = Field(default_factory=list)
+    reminders: list[ReminderResponse] = Field(default_factory=list)
