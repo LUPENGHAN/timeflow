@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from threading import RLock
 
-from timeapp.domain.enums import WriteRequestStatus
+from timeapp.domain.enums import ItemStatus, WriteRequestStatus
 from timeapp.domain.models import DomainEvent, Item, Reminder, VoiceCommand, WriteRequest
 
 
@@ -59,6 +59,18 @@ class InMemoryStore:
         with self._lock:
             self.items[item.id] = item
 
+    def get_item(self, item_id: str) -> Item | None:
+        """Load an item by id."""
+
+        with self._lock:
+            return self.items.get(item_id)
+
+    def update_item(self, item: Item) -> None:
+        """Persist an updated item."""
+
+        with self._lock:
+            self.items[item.id] = item
+
     def add_reminder(self, reminder: Reminder) -> None:
         """Persist a reminder."""
 
@@ -75,7 +87,11 @@ class InMemoryStore:
         """Return all visible items for a user."""
 
         with self._lock:
-            return [item for item in self.items.values() if item.user_id == user_id]
+            return [
+                item
+                for item in self.items.values()
+                if item.user_id == user_id and item.status != ItemStatus.DELETED
+            ]
 
     def list_events_after(self, cursor: int = 0) -> list[DomainEvent]:
         """Return events after a one-based cursor."""

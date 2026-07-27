@@ -17,6 +17,7 @@ from timeapp.capabilities.reminder.handler import ReminderCapability
 from timeapp.capabilities.todo.handler import TodoCapability
 from timeapp.domain.enums import (
     CommandAction,
+    CommandEntity,
     DomainEventType,
     ItemStatus,
     ItemType,
@@ -121,15 +122,17 @@ class TimeflowApplication:
                     clarification="没找到要修改的事项，请再说清楚一点。",
                     candidates=[],
                 )
-            self.store.add_events(events)
-            return VoiceCommandResult(
-                voice_command,
-                command,
-                None,
-                events,
-                clarification="找到候选事项，请先选择要修改的对象。",
-                candidates=candidates,
-            )
+
+            if len(candidates) > 1:
+                self.store.add_events(events)
+                return VoiceCommandResult(
+                    voice_command,
+                    command,
+                    None,
+                    events,
+                    clarification="找到多个候选事项，请先选择要修改的对象。",
+                    candidates=candidates,
+                )
 
         candidate_payload = self._candidate_payload(command, candidates)
         write_request = WriteRequest(
@@ -244,6 +247,104 @@ class TimeflowApplication:
         self.store.add_events([event])
         return item, [event]
 
+    def create_write_request(
+        self,
+        identity: Identity,
+        source_command_id: str,
+        candidate_payload: dict[str, Any],
+    ) -> tuple[WriteRequest, list[DomainEvent]]:
+        """Create a pending write request from a confirmed candidate payload."""
+
+        now = datetime.now(UTC)
+        command = self._command_from_candidate_payload(
+            identity,
+            source_command_id,
+            candidate_payload,
+        )
+        write_request = WriteRequest(
+            id=str(uuid4()),
+            identity=identity,
+            source_command_id=source_command_id,
+            command=command,
+            candidate_payload=candidate_payload,
+            payload_hash=self._payload_hash(candidate_payload),
+            expires_at=now + timedelta(minutes=10),
+            idempotency_key=(
+                f"{identity.user_id}:{source_command_id}:{len(self.store.write_requests) + 1}"
+            ),
+            created_at=now,
+            updated_at=now,
+        )
+        self.store.add_write_request(write_request)
+        event = self._event(
+            DomainEventType.WRITE_REQUEST_CREATED,
+            "write_request",
+            write_request.id,
+            {
+                "status": write_request.status.value,
+                "candidate_payload": write_request.candidate_payload,
+            },
+        )
+        self.store.add_events([event])
+        return write_request, [event]
+
+    def update_item(
+        self,
+        identity: Identity,
+        item_id: str,
+        title: str | None = None,
+        description: str | None = None,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+        due_at: datetime | None = None,
+        place_text: str | None = None,
+        status: ItemStatus | None = None,
+    ) -> tuple[Item, list[DomainEvent]]:
+        """Update an existing item and emit a domain event."""
+
+        item = self.store.get_item(item_id)
+        if item is None or item.user_id != identity.user_id:
+            raise ApplicationError(
+                ErrorCode.ITEM_NOT_FOUND,
+                f"Item {item_id} was not found.",
+            )
+
+        if title is not None:
+            item.title = title
+        if description is not None:
+            item.description = description
+        if start_at is not None:
+            item.start_at = start_at
+        if end_at is not None:
+            item.end_at = end_at
+        if due_at is not None:
+            item.due_at = due_at
+        if place_text is not None:
+            item.place_text = place_text
+        if status is not None:
+            item.status = status
+        item.version += 1
+        item.updated_at = datetime.now(UTC)
+        self.store.update_item(item)
+        event = self._event(
+            DomainEventType.ITEM_UPDATED,
+            "item",
+            item.id,
+            {"item": self._item_payload(item)},
+        )
+        self.store.add_events([event])
+        return item, [event]
+
+    def delete_item(self, identity: Identity, item_id: str) -> tuple[Item, list[DomainEvent]]:
+        """Mark an item as deleted."""
+
+        return self.update_item(identity, item_id, status=ItemStatus.DELETED)
+
+    def complete_item(self, identity: Identity, item_id: str) -> tuple[Item, list[DomainEvent]]:
+        """Mark an item as completed."""
+
+        return self.update_item(identity, item_id, status=ItemStatus.COMPLETED)
+
     def list_events(self, after_cursor: int = 0) -> list[DomainEvent]:
         """List domain events after a cursor."""
 
@@ -263,7 +364,11 @@ class TimeflowApplication:
             )
         return write_request
 
-    def _candidate_payload(self, command: Command, candidates: list[Item] | None = None) -> dict[str, Any]:
+    def _candidate_payload(
+        self,
+        command: Command,
+        candidates: list[Item] | None = None,
+    ) -> dict[str, Any]:
         operation = str(command.payload.get("operation", ""))
         if not operation:
             raise ApplicationError(
@@ -298,7 +403,10 @@ class TimeflowApplication:
                 }
                 for candidate in candidates or []
             ]
-            payload["candidates"] = [self._item_payload(candidate) for candidate in candidates or []]
+            payload["candidates"] = [
+                self._item_payload(candidate)
+                for candidate in candidates or []
+            ]
         if "reminder" in command.payload:
             payload["reminders"] = [command.payload["reminder"]]
         return payload
@@ -322,10 +430,64 @@ class TimeflowApplication:
             events.extend(self.reminder.apply(write_request, self.store, item_id))
             return events
 
+        if operation == "update_item":
+            return self._apply_item_operations(write_request, "update")
+
+        if operation == "complete_item":
+            return self._apply_item_operations(write_request, "complete")
+
+        if operation == "delete_item":
+            return self._apply_item_operations(write_request, "delete")
+
         raise ApplicationError(
             ErrorCode.CAPABILITY_NOT_ACTIVE,
             f"Operation {operation} is not active.",
         )
+
+    def _apply_item_operations(self, write_request: WriteRequest, mode: str) -> list[DomainEvent]:
+        operations = write_request.candidate_payload.get("operations", [])
+        if not isinstance(operations, list) or not operations:
+            target_id = self._optional_str(write_request.candidate_payload.get("target_id"))
+            if target_id is None:
+                raise ApplicationError(
+                    ErrorCode.MISSING_REQUIRED_FIELD,
+                    "Item operations are missing.",
+                )
+            operations = [
+                {
+                    "target_id": target_id,
+                    "changes": write_request.candidate_payload.get("item", {}),
+                }
+            ]
+
+        events: list[DomainEvent] = []
+        for operation in operations:
+            if not isinstance(operation, dict):
+                continue
+            target_id = self._optional_str(operation.get("target_id"))
+            if target_id is None:
+                continue
+            changes = operation.get("changes", {})
+            if not isinstance(changes, dict):
+                changes = {}
+            if mode == "update":
+                _, item_events = self.update_item(
+                    write_request.identity,
+                    target_id,
+                    title=self._optional_str(changes.get("title")),
+                    description=self._optional_str(changes.get("description")),
+                    start_at=self._optional_datetime(changes.get("start_at")),
+                    end_at=self._optional_datetime(changes.get("end_at")),
+                    due_at=self._optional_datetime(changes.get("due_at")),
+                    place_text=self._optional_str(changes.get("place_text")),
+                )
+            elif mode == "complete":
+                _, item_events = self.complete_item(write_request.identity, target_id)
+            else:
+                _, item_events = self.delete_item(write_request.identity, target_id)
+            events.extend(item_events)
+
+        return events
 
     def _last_created_item_id(self, events: list[DomainEvent]) -> str:
         for event in reversed(events):
@@ -353,6 +515,53 @@ class TimeflowApplication:
     def _payload_hash(self, payload: dict[str, Any]) -> str:
         encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str).encode()
         return hashlib.sha256(encoded).hexdigest()
+
+    def _command_from_candidate_payload(
+        self,
+        identity: Identity,
+        source_command_id: str,
+        candidate_payload: dict[str, Any],
+    ) -> Command:
+        operation = str(candidate_payload.get("operation", ""))
+        item_payload = candidate_payload.get("item", {})
+        if not isinstance(item_payload, dict):
+            item_payload = {}
+        entity_name = str(item_payload.get("type") or candidate_payload.get("entity") or "todo")
+        entity = (
+            CommandEntity.CALENDAR_EVENT
+            if entity_name == "calendar_event"
+            else CommandEntity.TODO
+        )
+        action = (
+            CommandAction.UPDATE
+            if operation.startswith("update")
+            else CommandAction.DELETE
+            if operation.startswith("delete")
+            else CommandAction.COMPLETE
+            if operation.startswith("complete")
+            else CommandAction.CREATE
+        )
+        return Command(
+            id=source_command_id,
+            identity=identity,
+            action=action,
+            entity=entity,
+            title=str(item_payload.get("title") or candidate_payload.get("title") or ""),
+            description=self._optional_str(item_payload.get("description")),
+            target_id=self._optional_str(candidate_payload.get("target_id")),
+            start_at=self._optional_datetime(item_payload.get("start_at")),
+            end_at=self._optional_datetime(item_payload.get("end_at")),
+            due_at=self._optional_datetime(item_payload.get("due_at")),
+            payload=candidate_payload,
+        )
+
+    def _optional_datetime(self, value: Any) -> datetime | None:
+        if not isinstance(value, str) or not value:
+            return None
+        return datetime.fromisoformat(value)
+
+    def _optional_str(self, value: Any) -> str | None:
+        return value if isinstance(value, str) and value else None
 
     def _item_payload(self, item: Item) -> dict[str, Any]:
         return {

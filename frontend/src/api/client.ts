@@ -120,6 +120,17 @@ export function rejectWriteRequest(writeRequestId: string) {
   );
 }
 
+export function createWriteRequest(input: {
+  source_command_id: string;
+  candidate_payload: Record<string, unknown>;
+}) {
+  return apiFetch<{ write_request: WriteRequest; events: EventMessage[] }>('/write-requests', {
+    body: JSON.stringify(input),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+  });
+}
+
 export function listItems() {
   return apiFetch<Item[]>('/items');
 }

@@ -6,13 +6,38 @@ from fastapi import APIRouter, Depends
 
 from timeapp.api.dependencies import get_identity, get_timeflow_app
 from timeapp.api.errors import http_error
-from timeapp.api.schemas import ConfirmationResponse, EventResponse, WriteRequestResponse
+from timeapp.api.schemas import (
+    ConfirmationResponse,
+    EventResponse,
+    WriteRequestCreateRequest,
+    WriteRequestCreateResponse,
+    WriteRequestResponse,
+)
 from timeapp.application.service import ApplicationError, TimeflowApplication
 from timeapp.domain.models import Identity
 
 router = APIRouter(prefix="/write-requests", tags=["write-requests"])
 IdentityDependency = Annotated[Identity, Depends(get_identity)]
 AppDependency = Annotated[TimeflowApplication, Depends(get_timeflow_app)]
+
+
+@router.post("", response_model=WriteRequestCreateResponse)
+async def create_write_request(
+    request: WriteRequestCreateRequest,
+    identity: IdentityDependency,
+    app: AppDependency,
+) -> WriteRequestCreateResponse:
+    """Create a pending write request from a candidate payload."""
+
+    write_request, events = app.create_write_request(
+        identity,
+        request.source_command_id,
+        request.candidate_payload,
+    )
+    return WriteRequestCreateResponse(
+        write_request=WriteRequestResponse.from_domain(write_request),
+        events=[EventResponse.from_domain(event) for event in events],
+    )
 
 
 @router.get("/pending", response_model=list[WriteRequestResponse])

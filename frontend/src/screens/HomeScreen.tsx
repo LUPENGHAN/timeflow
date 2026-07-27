@@ -5,6 +5,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import {
   confirmWriteRequest,
   createItem,
+  createWriteRequest,
   createVoiceCommand,
   getHealth,
   listItems,
@@ -32,6 +33,11 @@ export function HomeScreen() {
   const [voiceResult, setVoiceResult] = useState<VoiceCommandResult | null>(null);
   const [voiceStatus, setVoiceStatus] = useState<string | null>(null);
   const [selectedVoiceCandidateId, setSelectedVoiceCandidateId] = useState<string | null>(null);
+  const [pendingWriteRequest, setPendingWriteRequest] = useState<{
+    id: string;
+    candidate_payload: Record<string, unknown>;
+  } | null>(null);
+  const [pendingWriteLabel, setPendingWriteLabel] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -113,6 +119,38 @@ export function HomeScreen() {
     }
   }
 
+  async function handlePrepareItemAction(item: Item, operation: 'complete_item' | 'delete_item') {
+    const label = operation === 'complete_item' ? 'Complete item' : 'Delete item';
+    setBanner(null);
+    try {
+      const result = await createWriteRequest({
+        source_command_id: `manual-${item.id}-${operation}`,
+        candidate_payload: {
+          item: {
+            description: item.description,
+            due_at: item.due_at,
+            end_at: item.end_at,
+            place_text: item.place_text,
+            start_at: item.start_at,
+            title: item.title,
+            type: item.type,
+          },
+          operation,
+          source_text: label,
+          target_id: item.id,
+        },
+      });
+      setPendingWriteRequest({
+        candidate_payload: result.write_request.candidate_payload,
+        id: result.write_request.id,
+      });
+      setPendingWriteLabel(`${label}: ${item.title}`);
+      setBanner(null);
+    } catch {
+      setBanner('Failed to prepare write request');
+    }
+  }
+
   async function refreshItems() {
     const refreshed = await listItems();
     setItems(refreshed);
@@ -169,6 +207,37 @@ export function HomeScreen() {
       setVoiceStatus('Cancel failed');
     } finally {
       setVoiceSubmitting(false);
+    }
+  }
+
+  async function handleConfirmPendingWriteRequest() {
+    if (!pendingWriteRequest) {
+      return;
+    }
+
+    try {
+      await confirmWriteRequest(pendingWriteRequest.id);
+      await refreshItems();
+      setBanner('Item updated');
+      setPendingWriteRequest(null);
+      setPendingWriteLabel(null);
+    } catch {
+      setBanner('Confirm failed');
+    }
+  }
+
+  async function handleRejectPendingWriteRequest() {
+    if (!pendingWriteRequest) {
+      return;
+    }
+
+    try {
+      await rejectWriteRequest(pendingWriteRequest.id);
+      setPendingWriteRequest(null);
+      setPendingWriteLabel(null);
+      setBanner('Action cancelled');
+    } catch {
+      setBanner('Cancel failed');
     }
   }
 
@@ -271,6 +340,14 @@ export function HomeScreen() {
                   <Text style={styles.itemTitle}>{item.title}</Text>
                   <Text style={styles.itemMeta}>{item.description ?? 'Calendar'}</Text>
                 </View>
+                <View style={styles.inlineActions}>
+                  <Pressable
+                    onPress={() => handlePrepareItemAction(item, 'delete_item')}
+                    style={styles.inlineActionButton}
+                  >
+                    <Text style={styles.inlineActionText}>Delete</Text>
+                  </Pressable>
+                </View>
               </View>
             ))
           )}
@@ -291,6 +368,20 @@ export function HomeScreen() {
                   <Text style={styles.itemTitle}>{todo.title}</Text>
                   <Text style={styles.itemMeta}>{todo.description ?? 'Normal'}</Text>
                 </View>
+                <View style={styles.inlineActions}>
+                  <Pressable
+                    onPress={() => handlePrepareItemAction(todo, 'complete_item')}
+                    style={styles.inlineActionButton}
+                  >
+                    <Text style={styles.inlineActionText}>Done</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => handlePrepareItemAction(todo, 'delete_item')}
+                    style={styles.inlineActionButton}
+                  >
+                    <Text style={styles.inlineActionText}>Delete</Text>
+                  </Pressable>
+                </View>
               </View>
             ))
           )}
@@ -298,13 +389,19 @@ export function HomeScreen() {
 
         <View style={styles.confirmation}>
           <Text style={styles.confirmationLabel}>Pending confirmation</Text>
-          <Text style={styles.confirmationTitle}>Create todo: Pick up parcel</Text>
-          <Text style={styles.itemMeta}>Reminder when arriving home</Text>
+          <Text style={styles.confirmationTitle}>
+            {pendingWriteLabel ?? 'Create todo: Pick up parcel'}
+          </Text>
+          <Text style={styles.itemMeta}>
+            {pendingWriteRequest
+              ? String(pendingWriteRequest.candidate_payload.operation ?? 'pending')
+              : 'Reminder when arriving home'}
+          </Text>
           <View style={styles.actions}>
-            <Pressable style={styles.secondaryButton}>
+            <Pressable onPress={handleRejectPendingWriteRequest} style={styles.secondaryButton}>
               <Text style={styles.secondaryButtonText}>Cancel</Text>
             </Pressable>
-            <Pressable style={styles.primaryButton}>
+            <Pressable onPress={handleConfirmPendingWriteRequest} style={styles.primaryButton}>
               <Text style={styles.primaryButtonText}>Confirm</Text>
             </Pressable>
           </View>
@@ -528,6 +625,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+  },
+  inlineActionButton: {
+    borderColor: colors.border,
+    borderRadius: 6,
+    borderWidth: 1,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  inlineActionText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  inlineActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
   itemMeta: {
     color: colors.muted,

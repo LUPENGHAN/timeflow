@@ -105,6 +105,20 @@ class ConfirmationResponse(BaseModel):
     events: list[EventResponse]
 
 
+class WriteRequestCreateRequest(BaseModel):
+    """Create a pending write request from a candidate payload."""
+
+    source_command_id: str
+    candidate_payload: dict[str, Any]
+
+
+class WriteRequestCreateResponse(BaseModel):
+    """Pending write request creation response."""
+
+    write_request: WriteRequestResponse
+    events: list[EventResponse]
+
+
 class ItemResponse(BaseModel):
     """Calendar/todo item response."""
 
