@@ -10,6 +10,7 @@ import {
   createPlace,
   createVoiceCommand,
   deletePlace,
+  degradePermission,
   getHealth,
   getRealtimeUrl,
   listItems,
@@ -94,6 +95,9 @@ export function HomeScreen() {
   const [repeatTimeOfDay, setRepeatTimeOfDay] = useState('09:00');
   const [repeatWeekdays, setRepeatWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [repeatBusy, setRepeatBusy] = useState(false);
+  const [degradeTitle, setDegradeTitle] = useState('到家取快递');
+  const [degradePlaceText, setDegradePlaceText] = useState('家');
+  const [degradeBusy, setDegradeBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     const [itemResponse, pendingResponse, placeResponse, repeatResponse, outboxResponse] =
@@ -456,6 +460,29 @@ export function HomeScreen() {
       }
       return [...current, weekday].sort((left, right) => left - right);
     });
+  }
+
+  async function handleLocationDegrade() {
+    if (!degradeTitle.trim() || degradeBusy) {
+      return;
+    }
+
+    setDegradeBusy(true);
+    setBanner(null);
+    try {
+      await degradePermission({
+        permission: 'location',
+        place_text: degradePlaceText.trim() || null,
+        reason: 'location_permission_denied',
+        title: degradeTitle.trim(),
+      });
+      await refresh();
+      setBanner('已降级为普通待办');
+    } catch {
+      setBanner('权限降级失败');
+    } finally {
+      setDegradeBusy(false);
+    }
   }
 
   async function handleReminderAction(reminder: Reminder, action: ReminderAction) {
@@ -821,6 +848,33 @@ export function HomeScreen() {
               ))}
             </View>
           ) : null}
+        </View>
+
+        <View style={styles.degradeSection}>
+          <View style={styles.quickAddHeader}>
+            <Text style={styles.sectionTitle}>权限降级</Text>
+            <Text style={styles.subtle}>定位</Text>
+          </View>
+          <TextInput
+            value={degradeTitle}
+            onChangeText={setDegradeTitle}
+            placeholder="事项标题"
+            placeholderTextColor={colors.muted}
+            style={styles.input}
+          />
+          <TextInput
+            value={degradePlaceText}
+            onChangeText={setDegradePlaceText}
+            placeholder="文字地点"
+            placeholderTextColor={colors.muted}
+            style={styles.input}
+          />
+          <Pressable
+            onPress={handleLocationDegrade}
+            style={[styles.primaryButton, degradeBusy && styles.disabledButton]}
+          >
+            <Text style={styles.primaryButtonText}>{degradeBusy ? '处理中' : '降级为待办'}</Text>
+          </Pressable>
         </View>
 
         <View style={styles.outboxSection}>
@@ -2179,6 +2233,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   repeatSection: {
+    gap: spacing.md,
+  },
+  degradeSection: {
     gap: spacing.md,
   },
   outboxSection: {
