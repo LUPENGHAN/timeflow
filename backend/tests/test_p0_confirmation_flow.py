@@ -164,6 +164,39 @@ def test_voice_query_supports_tomorrow_and_week_ranges() -> None:
     app.dependency_overrides.clear()
 
 
+def test_voice_parser_reads_explicit_time_for_calendar_and_reminder() -> None:
+    """Voice parsing should keep explicit Chinese time expressions."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        tomorrow_prefix = (datetime.now(UTC) + timedelta(days=1)).strftime("%Y-%m-%d")
+        calendar_response = client.post(
+            "/api/v1/voice/commands",
+            json={"transcript": "明天下午三点开项目会"},
+        )
+        assert calendar_response.status_code == 200
+        calendar_body = calendar_response.json()
+        assert calendar_body["write_request"]["candidate_payload"]["operation"] == "create_calendar_event"
+        assert calendar_body["write_request"]["candidate_payload"]["item"]["start_at"].startswith(
+            f"{tomorrow_prefix}T15:00:00"
+        )
+
+        reminder_response = client.post(
+            "/api/v1/voice/commands",
+            json={"transcript": "明天上午九点提醒我交材料"},
+        )
+        assert reminder_response.status_code == 200
+        reminder_body = reminder_response.json()
+        assert reminder_body["write_request"]["candidate_payload"]["operation"] == "create_todo_with_reminder"
+        assert reminder_body["write_request"]["candidate_payload"]["reminders"][0]["trigger_at"].startswith(
+            f"{tomorrow_prefix}T09:00:00"
+        )
+
+    app.dependency_overrides.clear()
+
+
 def test_voice_update_requires_candidate_selection_before_confirm() -> None:
     """Ambiguous voice updates should create a pending write request that needs selection."""
 

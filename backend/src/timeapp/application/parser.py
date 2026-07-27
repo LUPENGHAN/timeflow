@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -85,6 +86,7 @@ class MockCommandParser:
         if "提醒" in normalized:
             title = self._extract_title_after_reminder(normalized)
             trigger_type = self._extract_place_trigger(normalized)
+            trigger_at = self._extract_explicit_datetime(normalized, now)
             return Command(
                 id=command_id,
                 identity=identity,
@@ -96,23 +98,30 @@ class MockCommandParser:
                     "reminder": {
                         "trigger_type": trigger_type.value,
                         "place_ref": "家" if "家" in normalized else None,
-                        "trigger_at": (now + timedelta(minutes=30)).isoformat()
-                        if trigger_type == ReminderTriggerType.TIME
-                        else None,
+                        "trigger_at": trigger_at.isoformat()
+                        if trigger_type == ReminderTriggerType.TIME and trigger_at
+                        else (
+                            (now + timedelta(minutes=30)).isoformat()
+                            if trigger_type == ReminderTriggerType.TIME
+                            else None
+                        ),
                     },
                     "source_text": normalized,
                 },
             )
 
-        if "会议" in normalized or "日程" in normalized or "安排" in normalized:
+        if self._looks_like_calendar_event(normalized):
+            start_at = self._extract_explicit_datetime(normalized, now)
+            if start_at is None:
+                start_at = now + timedelta(days=1)
             return Command(
                 id=command_id,
                 identity=identity,
                 action=CommandAction.CREATE,
                 entity=CommandEntity.CALENDAR_EVENT,
                 title=normalized,
-                start_at=now + timedelta(days=1),
-                end_at=now + timedelta(days=1, hours=1),
+                start_at=start_at,
+                end_at=start_at + timedelta(hours=1),
                 payload={"operation": "create_calendar_event", "source_text": normalized},
             )
 
@@ -148,6 +157,14 @@ class MockCommandParser:
     def _looks_like_complete(self, transcript: str) -> bool:
         return "买好了" in transcript or "完成了" in transcript or transcript.endswith("完成")
 
+    def _looks_like_calendar_event(self, transcript: str) -> bool:
+        return (
+            "会议" in transcript
+            or "日程" in transcript
+            or "安排" in transcript
+            or ("开" in transcript and "会" in transcript)
+        )
+
     def _extract_delete_reference(self, transcript: str) -> str:
         reference = transcript.removeprefix("取消").removeprefix("删除").strip()
         reference = reference.replace("明天的", "").replace("明天", "").strip()
@@ -174,8 +191,85 @@ class MockCommandParser:
         return ReminderTriggerType.TIME
 
     def _extract_update_time(self, transcript: str, now: datetime) -> datetime | None:
-        if "四点" in transcript or "4点" in transcript or "16点" in transcript:
-            return (now + timedelta(days=1)).replace(hour=16, minute=0, second=0, microsecond=0)
-        if "明天" in transcript:
-            return (now + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+        return self._extract_explicit_datetime(transcript, now)
+
+    def _extract_explicit_datetime(self, transcript: str, now: datetime) -> datetime | None:
+        match = re.search(
+            r"(?:(今天|明天|后天|大后天))?"
+            r"(?:(凌晨|早上|上午|中午|下午|晚上))?"
+            r"(?:(\d{1,2}|[零一二两三四五六七八九十]{1,3}))点"
+            r"(?:(\d{1,2})分?|(?P<half>半))?",
+            transcript,
+        )
+        if match is None:
+            return None
+
+        day_text, period_text, hour_text, minute_text = match.group(1), match.group(2), match.group(3), match.group(4)
+        day_offset = {
+            "今天": 0,
+            "明天": 1,
+            "后天": 2,
+            "大后天": 3,
+        }.get(day_text or "今天", 0)
+
+        hour = self._parse_chinese_number(hour_text)
+        if hour is None:
+            return None
+
+        minute = 0
+        if minute_text is not None:
+            minute = int(minute_text)
+        elif match.group("half") is not None:
+            minute = 30
+
+        if period_text in {"下午", "晚上"} and hour < 12:
+            hour += 12
+        if period_text == "中午" and hour < 11:
+            hour = 12 if hour == 0 else hour + 12
+        if period_text == "凌晨" and hour == 12:
+            hour = 0
+        if period_text in {"早上", "上午"} and hour == 12:
+            hour = 0
+        if period_text is None and 1 <= hour <= 6:
+            hour += 12
+
+        result = self._start_of_day(now + timedelta(days=day_offset)).replace(
+            hour=hour,
+            minute=minute,
+            second=0,
+            microsecond=0,
+        )
+        if day_text in {None, "今天"} and result <= now:
+            result += timedelta(days=1)
+        return result
+
+    def _parse_chinese_number(self, value: str) -> int | None:
+        if value.isdigit():
+            return int(value)
+        digit_map = {
+            "零": 0,
+            "一": 1,
+            "二": 2,
+            "两": 2,
+            "三": 3,
+            "四": 4,
+            "五": 5,
+            "六": 6,
+            "七": 7,
+            "八": 8,
+            "九": 9,
+        }
+        if value == "十":
+            return 10
+        if len(value) == 2 and value.startswith("十"):
+            return 10 + digit_map.get(value[1], 0)
+        if len(value) == 2 and value.endswith("十"):
+            return digit_map.get(value[0], 0) * 10
+        if len(value) == 3 and value[1] == "十":
+            return digit_map.get(value[0], 0) * 10 + digit_map.get(value[2], 0)
+        if len(value) == 2 and "十" in value:
+            left, right = value.split("十", maxsplit=1)
+            return digit_map.get(left, 1) * 10 + digit_map.get(right, 0)
+        if len(value) == 1:
+            return digit_map.get(value)
         return None
