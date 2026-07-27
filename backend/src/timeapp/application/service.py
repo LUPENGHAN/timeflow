@@ -17,6 +17,8 @@ from timeapp.capabilities.todo.handler import TodoCapability
 from timeapp.domain.enums import (
     CommandAction,
     DomainEventType,
+    ItemStatus,
+    ItemType,
     VoiceCommandStatus,
     WriteRequestStatus,
 )
@@ -165,6 +167,44 @@ class TimeflowApplication:
 
         return self.store.list_items(identity.user_id)
 
+    def create_item(
+        self,
+        identity: Identity,
+        item_type: ItemType,
+        title: str,
+        description: str | None = None,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+        due_at: datetime | None = None,
+        place_text: str | None = None,
+    ) -> tuple[Item, list[DomainEvent]]:
+        """Create a manual item without a confirmation gate."""
+
+        now = datetime.now(UTC)
+        item = Item(
+            id=str(uuid4()),
+            user_id=identity.user_id,
+            item_type=item_type,
+            title=title,
+            description=description,
+            status=ItemStatus.ACTIVE,
+            start_at=start_at,
+            end_at=end_at,
+            due_at=due_at,
+            place_text=place_text,
+            created_at=now,
+            updated_at=now,
+        )
+        self.store.add_item(item)
+        event = self._event(
+            DomainEventType.ITEM_CREATED,
+            "item",
+            item.id,
+            {"item": self._item_payload(item)},
+        )
+        self.store.add_events([event])
+        return item, [event]
+
     def list_events(self, after_cursor: int = 0) -> list[DomainEvent]:
         """List domain events after a cursor."""
 
@@ -258,3 +298,17 @@ class TimeflowApplication:
     def _payload_hash(self, payload: dict[str, Any]) -> str:
         encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str).encode()
         return hashlib.sha256(encoded).hexdigest()
+
+    def _item_payload(self, item: Item) -> dict[str, Any]:
+        return {
+            "id": item.id,
+            "type": item.item_type.value,
+            "title": item.title,
+            "description": item.description,
+            "start_at": item.start_at.isoformat() if item.start_at else None,
+            "end_at": item.end_at.isoformat() if item.end_at else None,
+            "due_at": item.due_at.isoformat() if item.due_at else None,
+            "place_text": item.place_text,
+            "status": item.status.value,
+            "version": item.version,
+        }

@@ -65,6 +65,26 @@ export type Item = {
   }[];
 };
 
+export type Reminder = Item['reminders'][number];
+
+export type Place = {
+  id: string;
+  label: string;
+  place_type: 'home' | 'work' | 'custom' | 'temporary_parking';
+  latitude: string | null;
+  longitude: string | null;
+  accuracy_meters: number | null;
+  radius_meters: number;
+  description: string | null;
+};
+
+export type LocalCache = {
+  items: Item[];
+  reminders: Reminder[];
+  places: Place[];
+  write_requests: WriteRequest[];
+};
+
 export type HealthResponse = {
   status: 'ok';
 };
@@ -94,6 +114,22 @@ export function confirmWriteRequest(writeRequestId: string) {
 
 export function listItems() {
   return apiFetch<Item[]>('/items');
+}
+
+export function createItem(input: {
+  type: 'calendar_event' | 'todo';
+  title: string;
+  description?: string | null;
+  start_at?: string | null;
+  end_at?: string | null;
+  due_at?: string | null;
+  place_text?: string | null;
+}) {
+  return apiFetch<{ item: Item; events: EventMessage[] }>('/items', {
+    body: JSON.stringify(input),
+    headers: { 'Content-Type': 'application/json' },
+    method: 'POST',
+  });
 }
 
 export { API_BASE_URL };

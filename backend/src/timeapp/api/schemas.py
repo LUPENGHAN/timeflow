@@ -134,6 +134,25 @@ class ItemResponse(BaseModel):
         )
 
 
+class ItemCreateRequest(BaseModel):
+    """Create a manual calendar or todo item."""
+
+    type: str
+    title: str = Field(min_length=1)
+    description: str | None = None
+    start_at: datetime | None = None
+    end_at: datetime | None = None
+    due_at: datetime | None = None
+    place_text: str | None = None
+
+
+class ItemCreateResponse(BaseModel):
+    """Created item response."""
+
+    item: ItemResponse
+    events: list[EventResponse]
+
+
 class ReminderResponse(BaseModel):
     """Reminder response bound to an item."""
 
