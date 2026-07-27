@@ -1,4 +1,12 @@
 import { StatusBar } from 'expo-status-bar';
+import {
+  getRecordingPermissionsAsync,
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from 'expo-audio';
 import * as Notifications from 'expo-notifications';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
@@ -1298,9 +1306,53 @@ function VoiceSheet({
   transcript: string;
   visible: boolean;
 }) {
+  const recorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
+  const recorderState = useAudioRecorderState(recorder);
+  const [recordingBusy, setRecordingBusy] = useState(false);
+  const [recordingMessage, setRecordingMessage] = useState<string | null>(null);
+  const [recordedUri, setRecordedUri] = useState<string | null>(null);
   const preview = result?.write_request?.candidate_payload;
   const needsSelection = Boolean(result?.write_request && result.candidates.length > 1);
   const canConfirm = Boolean(preview) && (!needsSelection || selectedCandidateId !== null) && !busy;
+
+  async function handleToggleRecording() {
+    if (recordingBusy) {
+      return;
+    }
+
+    setRecordingBusy(true);
+    setRecordingMessage(null);
+    try {
+      if (recorderState.isRecording) {
+        await recorder.stop();
+        setRecordedUri(recorder.uri ?? recorderState.url ?? null);
+        setRecordingMessage('录音已保存');
+        return;
+      }
+
+      const permission = await getRecordingPermissionsAsync();
+      const granted = permission.granted ? permission : await requestRecordingPermissionsAsync();
+      if (!granted.granted) {
+        setRecordingMessage('麦克风权限未开启');
+        return;
+      }
+
+      await setAudioModeAsync({
+        allowsRecording: true,
+        interruptionMode: 'doNotMix',
+        playsInSilentMode: true,
+      });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      setRecordedUri(null);
+      setRecordingMessage('正在录音');
+    } catch (error) {
+      setRecordingMessage(error instanceof Error ? error.message : '录音失败');
+    } finally {
+      setRecordingBusy(false);
+    }
+  }
+
   return (
     <Modal animationType="slide" visible={visible}>
       <View style={styles.modalRoot}>
@@ -1331,6 +1383,21 @@ function VoiceSheet({
             >
               <Text style={styles.primaryButtonText}>{busy ? '解析中' : '生成候选'}</Text>
             </Pressable>
+            <Pressable
+              onPress={handleToggleRecording}
+              style={[styles.secondaryButton, recordingBusy && styles.disabledButton]}
+            >
+              <Text style={styles.secondaryButtonText}>
+                {recorderState.isRecording ? '停止录音' : '开始录音'}
+              </Text>
+            </Pressable>
+            <Text style={styles.previewMeta}>
+              {recorderState.isRecording
+                ? `录音中 ${Math.ceil(recorderState.durationMillis / 1000)} 秒`
+                : '可先录音，再手动整理转写'}
+            </Text>
+            {recordingMessage ? <Text style={styles.noticeText}>{recordingMessage}</Text> : null}
+            {recordedUri ? <Text style={styles.previewMeta}>录音文件 {recordedUri}</Text> : null}
           </View>
 
           {result?.clarification ? (
