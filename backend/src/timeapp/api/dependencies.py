@@ -30,6 +30,10 @@ def get_timeflow_app() -> Generator[TimeflowApplication, None, None]:
     session = SessionLocal()
     try:
         yield TimeflowApplication(SqlAlchemyStore(session))
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
     finally:
         session.close()
 

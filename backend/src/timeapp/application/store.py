@@ -275,7 +275,7 @@ class SqlAlchemyStore:
                 updated_at=voice_command.updated_at,
             )
         )
-        self.session.commit()
+        self.session.flush()
 
     def update_voice_command(self, voice_command: VoiceCommand) -> None:
         """Persist an updated voice command audit record."""
@@ -288,13 +288,13 @@ class SqlAlchemyStore:
         record.parsed_command = {"command_id": voice_command.command_id}
         record.error_code = voice_command.error_code
         record.updated_at = voice_command.updated_at
-        self.session.commit()
+        self.session.flush()
 
     def add_write_request(self, write_request: WriteRequest) -> None:
         """Persist a pending write request."""
 
         self.session.add(self._write_request_to_record(write_request))
-        self.session.commit()
+        self.session.flush()
 
     def update_write_request(self, write_request: WriteRequest) -> None:
         """Persist an updated write request."""
@@ -308,7 +308,7 @@ class SqlAlchemyStore:
         record.status = write_request.status.value
         record.expires_at = write_request.expires_at
         record.updated_at = write_request.updated_at
-        self.session.commit()
+        self.session.flush()
 
     def get_write_request(self, write_request_id: str) -> WriteRequest | None:
         """Load a write request by id."""
@@ -333,7 +333,7 @@ class SqlAlchemyStore:
         """Persist a calendar or todo item."""
 
         self.session.add(self._item_to_record(item))
-        self.session.commit()
+        self.session.flush()
 
     def get_item(self, item_id: str) -> Item | None:
         """Load an item by id."""
@@ -360,7 +360,7 @@ class SqlAlchemyStore:
         record.version = item.version
         record.updated_at = item.updated_at
         record.deleted_at = item.updated_at if item.status == ItemStatus.DELETED else None
-        self.session.commit()
+        self.session.flush()
 
     def list_items(self, user_id: str) -> list[Item]:
         """Return all visible items for a user."""
@@ -393,7 +393,7 @@ class SqlAlchemyStore:
                 updated_at=place.updated_at,
             )
         )
-        self.session.commit()
+        self.session.flush()
 
     def get_place(self, place_id: str) -> Place | None:
         """Load a place by id."""
@@ -416,7 +416,7 @@ class SqlAlchemyStore:
         record.radius_meters = place.radius_meters
         record.description = place.description
         record.updated_at = place.updated_at
-        self.session.commit()
+        self.session.flush()
 
     def delete_place(self, place_id: str) -> None:
         """Delete a place by id."""
@@ -424,7 +424,7 @@ class SqlAlchemyStore:
         record = self.session.get(PlaceRecord, place_id)
         if record is not None:
             self.session.delete(record)
-            self.session.commit()
+            self.session.flush()
 
     def list_places(self, user_id: str) -> list[Place]:
         """Return all visible places for a user."""
@@ -454,7 +454,7 @@ class SqlAlchemyStore:
                 updated_at=repeat_rule.updated_at,
             )
         )
-        self.session.commit()
+        self.session.flush()
 
     def list_repeat_rules(self, user_id: str) -> list[RepeatRule]:
         """Return repeat rules for a user."""
@@ -470,7 +470,7 @@ class SqlAlchemyStore:
         """Persist a reminder."""
 
         self.session.add(self._reminder_to_record(reminder))
-        self.session.commit()
+        self.session.flush()
 
     def get_reminder(self, reminder_id: str) -> Reminder | None:
         """Load a reminder by id."""
@@ -503,7 +503,7 @@ class SqlAlchemyStore:
         record.version = reminder.version
         record.updated_at = reminder.updated_at
         record.cancelled_at = reminder.cancelled_at
-        self.session.commit()
+        self.session.flush()
 
     def list_reminders(self, user_id: str) -> list[Reminder]:
         """Return reminders for a user."""
@@ -546,7 +546,7 @@ class SqlAlchemyStore:
                 )
             )
             start_version += 1
-        self.session.commit()
+        self.session.flush()
 
     def list_events_after(self, cursor: int = 0) -> list[DomainEvent]:
         """Return events after a one-based cursor."""
