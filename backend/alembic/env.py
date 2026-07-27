@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, pool
 
 from timeapp.core.config import get_settings
 from timeapp.core.db import Base
+from timeapp.infrastructure import models  # noqa: F401
 
 # 新增 ORM 模型后在此导入，确保 metadata 注册进 autogenerate。
 
