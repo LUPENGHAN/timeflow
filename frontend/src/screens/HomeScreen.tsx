@@ -5,6 +5,7 @@ import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 
 import {
   applyReminderAction,
   confirmWriteRequest,
+  createRepeatRule,
   createWriteRequest,
   createPlace,
   createVoiceCommand,
@@ -14,11 +15,13 @@ import {
   listItems,
   listPendingWriteRequests,
   listPlaces,
+  listRepeatRules,
   rejectWriteRequest,
   updateWriteRequest,
   type Item,
   type Place,
   type Reminder,
+  type RepeatRule,
   type VoiceCommandResult,
   type WriteRequest,
 } from '../api/client';
@@ -59,6 +62,7 @@ export function HomeScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('today');
   const [items, setItems] = useState<Item[]>([]);
   const [places, setPlaces] = useState<Place[]>([]);
+  const [repeatRules, setRepeatRules] = useState<RepeatRule[]>([]);
   const [pendingWrites, setPendingWrites] = useState<WriteRequest[]>([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -83,16 +87,22 @@ export function HomeScreen() {
   const [placeDescription, setPlaceDescription] = useState('');
   const [placeBusy, setPlaceBusy] = useState(false);
   const [deletingPlaceId, setDeletingPlaceId] = useState<string | null>(null);
+  const [repeatPattern, setRepeatPattern] = useState('workdays');
+  const [repeatTimeOfDay, setRepeatTimeOfDay] = useState('09:00');
+  const [repeatWeekdays, setRepeatWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [repeatBusy, setRepeatBusy] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [itemResponse, pendingResponse, placeResponse] = await Promise.all([
+    const [itemResponse, pendingResponse, placeResponse, repeatResponse] = await Promise.all([
       listItems(),
       listPendingWriteRequests(),
       listPlaces(),
+      listRepeatRules(),
     ]);
     setItems(itemResponse);
     setPendingWrites(pendingResponse);
     setPlaces(placeResponse);
+    setRepeatRules(repeatResponse);
   }, []);
 
   useEffect(() => {
@@ -405,6 +415,43 @@ export function HomeScreen() {
     }
   }
 
+  async function handleCreateRepeatRule() {
+    if (!repeatPattern.trim() || repeatBusy) {
+      return;
+    }
+
+    const timeOfDay = repeatTimeOfDay.trim();
+    if (timeOfDay && !/^\d{2}:\d{2}$/.test(timeOfDay)) {
+      setBanner('重复时间格式应为 HH:MM');
+      return;
+    }
+
+    setRepeatBusy(true);
+    setBanner(null);
+    try {
+      await createRepeatRule({
+        pattern: repeatPattern.trim(),
+        time_of_day: timeOfDay || null,
+        weekdays: repeatWeekdays,
+      });
+      await refresh();
+      setBanner('重复规则已保存');
+    } catch {
+      setBanner('保存重复规则失败');
+    } finally {
+      setRepeatBusy(false);
+    }
+  }
+
+  function handleToggleRepeatWeekday(weekday: number) {
+    setRepeatWeekdays((current) => {
+      if (current.includes(weekday)) {
+        return current.filter((value) => value !== weekday);
+      }
+      return [...current, weekday].sort((left, right) => left - right);
+    });
+  }
+
   async function handleReminderAction(reminder: Reminder, action: ReminderAction) {
     if (actingReminderId === reminder.id) {
       return;
@@ -702,6 +749,67 @@ export function HomeScreen() {
                         {deletingPlaceId === place.id ? '删除中' : '删除'}
                       </Text>
                     </Pressable>
+                  </View>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+
+        <View style={styles.repeatSection}>
+          <View style={styles.quickAddHeader}>
+            <Text style={styles.sectionTitle}>重复规则</Text>
+            <Text style={styles.subtle}>{repeatRules.length} 项</Text>
+          </View>
+          <TextInput
+            value={repeatPattern}
+            onChangeText={setRepeatPattern}
+            placeholder="规则名称，例如 workdays"
+            placeholderTextColor={colors.muted}
+            style={styles.input}
+          />
+          <View style={styles.placePicker}>
+            {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
+              const selected = repeatWeekdays.includes(weekday);
+              return (
+                <Pressable
+                  key={weekday}
+                  onPress={() => handleToggleRepeatWeekday(weekday)}
+                  style={[styles.placeChip, selected && styles.placeChipActive]}
+                >
+                  <Text style={[styles.placeChipText, selected && styles.placeChipTextActive]}>
+                    {weekdayLabel(weekday)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          <TextInput
+            value={repeatTimeOfDay}
+            onChangeText={setRepeatTimeOfDay}
+            placeholder="触发时间，例如 09:00，可选"
+            placeholderTextColor={colors.muted}
+            style={styles.input}
+          />
+          <Pressable
+            onPress={handleCreateRepeatRule}
+            style={[styles.primaryButton, repeatBusy && styles.disabledButton]}
+          >
+            <Text style={styles.primaryButtonText}>{repeatBusy ? '保存中' : '保存重复规则'}</Text>
+          </Pressable>
+
+          {repeatRules.length > 0 ? (
+            <View style={styles.placeList}>
+              {repeatRules.map((repeatRule) => (
+                <View key={repeatRule.id} style={styles.placeRow}>
+                  <View style={styles.placeBody}>
+                    <View style={styles.itemHeader}>
+                      <Text style={styles.itemTitle}>{repeatRule.pattern}</Text>
+                      <Text style={styles.itemKind}>
+                        {seriesStatusLabel(repeatRule.series_status)}
+                      </Text>
+                    </View>
+                    <Text style={styles.placeMeta}>{repeatRuleSummary(repeatRule)}</Text>
                   </View>
                 </View>
               ))}
@@ -1596,6 +1704,22 @@ function placeTypeLabel(placeType: Place['place_type']) {
   return '自定义';
 }
 
+function weekdayLabel(weekday: number) {
+  return ['一', '二', '三', '四', '五', '六', '日'][weekday - 1] ?? String(weekday);
+}
+
+function repeatRuleSummary(repeatRule: RepeatRule) {
+  const weekdays =
+    repeatRule.weekdays.length > 0
+      ? repeatRule.weekdays.map((weekday) => `周${weekdayLabel(weekday)}`).join('、')
+      : '每天';
+  return repeatRule.time_of_day ? `${weekdays} · ${repeatRule.time_of_day}` : weekdays;
+}
+
+function seriesStatusLabel(status: string) {
+  return status === 'active' ? '启用' : status;
+}
+
 function reminderActionSuccessLabel(action: ReminderAction) {
   if (action === 'snooze') {
     return '提醒已延后';
@@ -2007,6 +2131,9 @@ const styles = StyleSheet.create({
   root: {
     backgroundColor: colors.background,
     flex: 1,
+  },
+  repeatSection: {
+    gap: spacing.md,
   },
   rowActions: {
     alignItems: 'flex-end',
