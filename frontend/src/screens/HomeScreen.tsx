@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
+  applyReminderAction,
   confirmWriteRequest,
   createWriteRequest,
   createVoiceCommand,
@@ -29,6 +30,7 @@ type ManualOperation =
   | 'complete_item'
   | 'cancel_complete_item'
   | 'delete_item';
+type ReminderAction = 'dismiss' | 'snooze' | 'cancel';
 
 type EditDraft = {
   title: string;
@@ -65,6 +67,7 @@ export function HomeScreen() {
   const [reminderItem, setReminderItem] = useState<Item | null>(null);
   const [reminderDraft, setReminderDraft] = useState<ReminderDraft>(defaultReminderDraft());
   const [reminderBusy, setReminderBusy] = useState(false);
+  const [actingReminderId, setActingReminderId] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const [itemResponse, pendingResponse] = await Promise.all([
@@ -326,6 +329,27 @@ export function HomeScreen() {
     }
   }
 
+  async function handleReminderAction(reminder: Reminder, action: ReminderAction) {
+    if (actingReminderId === reminder.id) {
+      return;
+    }
+
+    setActingReminderId(reminder.id);
+    setBanner(null);
+    try {
+      await applyReminderAction(reminder.id, {
+        action,
+        snooze_minutes: action === 'snooze' ? 10 : undefined,
+      });
+      await refresh();
+      setBanner(reminderActionSuccessLabel(action));
+    } catch {
+      setBanner('提醒处理失败');
+    } finally {
+      setActingReminderId(null);
+    }
+  }
+
   async function handleConfirmPending(writeRequestId: string) {
     try {
       await confirmWriteRequest(writeRequestId);
@@ -519,8 +543,10 @@ export function HomeScreen() {
               <ItemRow
                 key={item.id}
                 item={item}
+                actingReminderId={actingReminderId}
                 onEdit={handleOpenEdit}
                 onPrepareOperation={handlePrepareItemOperation}
+                onReminderAction={handleReminderAction}
                 onRemind={handleOpenReminder}
               />
             ))
@@ -595,13 +621,17 @@ function Metric({ label, value }: { label: string; value: number }) {
 
 function ItemRow({
   item,
+  actingReminderId,
   onEdit,
   onPrepareOperation,
+  onReminderAction,
   onRemind,
 }: {
   item: Item;
+  actingReminderId: string | null;
   onEdit: (item: Item) => void;
   onPrepareOperation: (item: Item, operation: ManualOperation) => void;
+  onReminderAction: (reminder: Reminder, action: ReminderAction) => void;
   onRemind: (item: Item) => void;
 }) {
   const completed = item.status === 'completed';
@@ -619,7 +649,12 @@ function ItemRow({
         {item.reminders.length > 0 ? (
           <View style={styles.badges}>
             {item.reminders.slice(0, 2).map((reminder) => (
-              <ReminderBadge key={reminder.id} reminder={reminder} />
+              <ReminderControl
+                key={reminder.id}
+                actingReminderId={actingReminderId}
+                onAction={onReminderAction}
+                reminder={reminder}
+              />
             ))}
             {item.reminders.length > 2 ? (
               <View style={styles.badge}>
@@ -686,12 +721,50 @@ function PendingWriteRow({
   );
 }
 
-function ReminderBadge({ reminder }: { reminder: Reminder }) {
+function ReminderControl({
+  actingReminderId,
+  onAction,
+  reminder,
+}: {
+  actingReminderId: string | null;
+  onAction: (reminder: Reminder, action: ReminderAction) => void;
+  reminder: Reminder;
+}) {
+  const active =
+    reminder.status === 'pending' ||
+    reminder.status === 'armed' ||
+    reminder.status === 'snoozed' ||
+    reminder.status === 'delivered';
+  const busy = actingReminderId === reminder.id;
   return (
-    <View style={styles.badge}>
-      <Text style={styles.badgeText}>
-        {reminderLabel(reminder)} · {statusLabel(reminder.status)}
-      </Text>
+    <View style={styles.reminderControl}>
+      <View style={styles.badge}>
+        <Text style={styles.badgeText}>
+          {reminderLabel(reminder)} · {statusLabel(reminder.status)}
+        </Text>
+      </View>
+      {active ? (
+        <View style={styles.reminderActions}>
+          <Pressable
+            onPress={() => onAction(reminder, 'snooze')}
+            style={[styles.tinyButton, busy && styles.disabledButton]}
+          >
+            <Text style={styles.tinyButtonText}>延后</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => onAction(reminder, 'dismiss')}
+            style={[styles.tinyButton, busy && styles.disabledButton]}
+          >
+            <Text style={styles.tinyButtonText}>确认</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => onAction(reminder, 'cancel')}
+            style={[styles.tinyButtonDanger, busy && styles.disabledButton]}
+          >
+            <Text style={styles.tinyButtonDangerText}>取消</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -1104,8 +1177,23 @@ function statusLabel(status: string) {
   if (status === 'pending') {
     return '等待中';
   }
+  if (status === 'armed') {
+    return '已布防';
+  }
   if (status === 'delivered') {
     return '已提醒';
+  }
+  if (status === 'dismissed') {
+    return '已确认';
+  }
+  if (status === 'snoozed') {
+    return '已延后';
+  }
+  if (status === 'cancelled') {
+    return '已取消';
+  }
+  if (status === 'failed') {
+    return '失败';
   }
   return status;
 }
@@ -1136,6 +1224,16 @@ function priorityLabel(priority: ReminderDraft['priority']) {
     return '高';
   }
   return '普通';
+}
+
+function reminderActionSuccessLabel(action: ReminderAction) {
+  if (action === 'snooze') {
+    return '提醒已延后';
+  }
+  if (action === 'cancel') {
+    return '提醒已取消';
+  }
+  return '提醒已确认';
 }
 
 function toInputDateTime(value: string | null) {
@@ -1349,6 +1447,14 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     marginTop: spacing.sm,
   },
+  reminderActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  reminderControl: {
+    gap: 6,
+  },
   priorityButton: {
     alignItems: 'center',
     borderColor: colors.border,
@@ -1418,6 +1524,32 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     justifyContent: 'center',
     padding: spacing.md,
+  },
+  tinyButton: {
+    alignItems: 'center',
+    backgroundColor: '#EAF1FF',
+    borderRadius: 6,
+    minWidth: 48,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  tinyButtonDanger: {
+    alignItems: 'center',
+    backgroundColor: '#FFEDEE',
+    borderRadius: 6,
+    minWidth: 48,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  tinyButtonDangerText: {
+    color: '#B4232C',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  tinyButtonText: {
+    color: colors.accent,
+    fontSize: 11,
+    fontWeight: '900',
   },
   secondaryButton: {
     alignItems: 'center',
