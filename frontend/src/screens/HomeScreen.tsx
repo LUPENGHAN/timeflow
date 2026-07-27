@@ -1,4 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
+import * as Notifications from 'expo-notifications';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
@@ -30,6 +31,15 @@ import {
   type WriteRequest,
 } from '../api/client';
 import { colors, spacing } from '../constants/theme';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 type ViewMode = 'today' | 'week' | 'month';
 type ItemType = 'todo' | 'calendar_event';
@@ -512,26 +522,42 @@ export function HomeScreen() {
     setActingReminderId(reminder.id);
     setBanner(null);
     try {
+      let nextAction = action;
+      let localNotificationId: string | undefined;
+      let registrationFailedReason: string | undefined;
+      if (action === 'registered') {
+        try {
+          localNotificationId = await scheduleLocalReminderNotification(
+            reminder,
+            itemTitleById.get(reminder.item_id) ?? 'Timeflow 提醒',
+          );
+        } catch (error) {
+          nextAction = 'registration_failed';
+          registrationFailedReason =
+            error instanceof Error ? error.message : 'notification_registration_failed';
+        }
+      }
       await applyReminderAction(reminder.id, {
-        action,
+        action: nextAction,
         fallback_after_seconds:
-          action === 'failed' || action === 'registration_failed' || action === 'local_unavailable'
+          nextAction === 'failed' ||
+          nextAction === 'registration_failed' ||
+          nextAction === 'local_unavailable'
             ? 300
             : undefined,
         failed_reason:
-          action === 'failed'
+          nextAction === 'failed'
             ? 'manual_failed'
-            : action === 'registration_failed'
-              ? 'registration_failed'
-              : action === 'local_unavailable'
+            : nextAction === 'registration_failed'
+              ? (registrationFailedReason ?? 'registration_failed')
+              : nextAction === 'local_unavailable'
                 ? 'local_unavailable'
                 : undefined,
-        local_notification_id:
-          action === 'registered' ? `local-${reminder.id.slice(0, 8)}` : undefined,
-        snooze_minutes: action === 'snooze' ? 10 : undefined,
+        local_notification_id: localNotificationId,
+        snooze_minutes: nextAction === 'snooze' ? 10 : undefined,
       });
       await refresh();
-      setBanner(reminderActionSuccessLabel(action));
+      setBanner(reminderActionSuccessLabel(nextAction));
     } catch {
       setBanner('提醒处理失败');
     } finally {
@@ -1737,6 +1763,37 @@ function reminderLabel(reminder: Reminder) {
     return '离开地点';
   }
   return '回到地点';
+}
+
+async function scheduleLocalReminderNotification(reminder: Reminder, title: string) {
+  if (reminder.trigger_type !== 'time' || !reminder.trigger_at) {
+    throw new Error('Only time reminders can be scheduled locally.');
+  }
+
+  const triggerAt = new Date(reminder.trigger_at);
+  if (Number.isNaN(triggerAt.getTime()) || triggerAt <= new Date()) {
+    throw new Error('Reminder trigger time must be in the future.');
+  }
+
+  let permission = await Notifications.getPermissionsAsync();
+  if (!permission.granted) {
+    permission = await Notifications.requestPermissionsAsync();
+  }
+  if (!permission.granted) {
+    throw new Error('Notification permission denied.');
+  }
+
+  return Notifications.scheduleNotificationAsync({
+    content: {
+      body: reminderLabel(reminder),
+      data: { reminderId: reminder.id },
+      title,
+    },
+    trigger: {
+      date: triggerAt,
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+    },
+  });
 }
 
 function formatDate(value: string) {
