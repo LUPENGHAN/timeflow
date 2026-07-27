@@ -17,6 +17,7 @@ import {
   listOutboxMessages,
   listPendingWriteRequests,
   listPlaces,
+  listReminders,
   listRepeatRules,
   rejectWriteRequest,
   updateWriteRequest,
@@ -67,6 +68,7 @@ export function HomeScreen() {
   const [places, setPlaces] = useState<Place[]>([]);
   const [repeatRules, setRepeatRules] = useState<RepeatRule[]>([]);
   const [outboxMessages, setOutboxMessages] = useState<OutboxMessage[]>([]);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
   const [pendingWrites, setPendingWrites] = useState<WriteRequest[]>([]);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
@@ -100,19 +102,27 @@ export function HomeScreen() {
   const [degradeBusy, setDegradeBusy] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [itemResponse, pendingResponse, placeResponse, repeatResponse, outboxResponse] =
-      await Promise.all([
-        listItems(),
-        listPendingWriteRequests(),
-        listPlaces(),
-        listRepeatRules(),
-        listOutboxMessages(),
-      ]);
+    const [
+      itemResponse,
+      pendingResponse,
+      placeResponse,
+      repeatResponse,
+      outboxResponse,
+      reminderResponse,
+    ] = await Promise.all([
+      listItems(),
+      listPendingWriteRequests(),
+      listPlaces(),
+      listRepeatRules(),
+      listOutboxMessages(),
+      listReminders(),
+    ]);
     setItems(itemResponse);
     setPendingWrites(pendingResponse);
     setPlaces(placeResponse);
     setRepeatRules(repeatResponse);
     setOutboxMessages(outboxResponse);
+    setReminders(reminderResponse);
   }, []);
 
   useEffect(() => {
@@ -181,6 +191,7 @@ export function HomeScreen() {
     [items],
   );
   const todoItems = useMemo(() => items.filter((item) => item.type === 'todo'), [items]);
+  const itemTitleById = useMemo(() => new Map(items.map((item) => [item.id, item.title])), [items]);
   const visibleItems = useMemo(() => filterItemsByMode(items, viewMode), [items, viewMode]);
 
   async function handlePrepareCreateItem() {
@@ -639,6 +650,7 @@ export function HomeScreen() {
         <View style={styles.metricsRow}>
           <Metric label="日历" value={calendarItems.length} />
           <Metric label="待办" value={todoItems.length} />
+          <Metric label="提醒" value={reminders.length} />
           <Metric label="地点" value={places.length} />
           <Metric label="待确认" value={pendingWrites.length} />
         </View>
@@ -875,6 +887,35 @@ export function HomeScreen() {
           >
             <Text style={styles.primaryButtonText}>{degradeBusy ? '处理中' : '降级为待办'}</Text>
           </Pressable>
+        </View>
+
+        <View style={styles.reminderOverviewSection}>
+          <View style={styles.sectionHeader}>
+            <Text style={styles.sectionTitle}>提醒总览</Text>
+            <Text style={styles.subtle}>{reminders.length} 条</Text>
+          </View>
+          {reminders.length > 0 ? (
+            <View style={styles.placeList}>
+              {reminders.map((reminder) => (
+                <View key={reminder.id} style={styles.queryRow}>
+                  <View style={styles.itemHeader}>
+                    <Text style={styles.itemTitle}>
+                      {itemTitleById.get(reminder.item_id) ?? reminder.item_id.slice(0, 8)}
+                    </Text>
+                    <Text style={styles.itemKind}>{statusLabel(reminder.status)}</Text>
+                  </View>
+                  <Text style={styles.placeMeta}>{reminderOverviewMeta(reminder)}</Text>
+                  <ReminderControl
+                    actingReminderId={actingReminderId}
+                    onAction={handleReminderAction}
+                    reminder={reminder}
+                  />
+                </View>
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.emptyText}>还没有提醒。</Text>
+          )}
         </View>
 
         <View style={styles.outboxSection}>
@@ -1763,6 +1804,12 @@ function reminderDraftSummary(draft: ReminderDraft, places: Place[]) {
   return place ? place.label : '未选择地点';
 }
 
+function reminderOverviewMeta(reminder: Reminder) {
+  const fallback =
+    reminder.fallback_status === 'not_required' ? '无兜底' : `兜底 ${reminder.fallback_status}`;
+  return `${reminderLabel(reminder)} · 通知 ${reminder.local_registration_status} · ${fallback}`;
+}
+
 function priorityLabel(priority: ReminderDraft['priority']) {
   if (priority === 'low') {
     return '低';
@@ -2236,6 +2283,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   degradeSection: {
+    gap: spacing.md,
+  },
+  reminderOverviewSection: {
     gap: spacing.md,
   },
   outboxSection: {

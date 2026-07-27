@@ -219,6 +219,10 @@ export function listOutboxMessages() {
   return apiFetch<OutboxMessage[]>('/events/outbox');
 }
 
+export function listReminders() {
+  return apiFetch<Reminder[]>('/reminders');
+}
+
 export function applyReminderAction(
   reminderId: string,
   input: {
