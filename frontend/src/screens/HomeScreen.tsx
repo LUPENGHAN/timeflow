@@ -146,6 +146,8 @@ export function HomeScreen() {
   const [degradeTitle, setDegradeTitle] = useState('到家取快递');
   const [degradePlaceText, setDegradePlaceText] = useState('家');
   const [degradeBusy, setDegradeBusy] = useState(false);
+  const itemsRef = useRef<Item[]>(initialCache?.items ?? []);
+  const remindersRef = useRef<Reminder[]>(initialCache?.reminders ?? []);
 
   const refresh = useCallback(async () => {
     const [
@@ -163,17 +165,21 @@ export function HomeScreen() {
       listOutboxMessages(),
       listReminders(),
     ]);
-    setItems(itemResponse);
+    const nextItems = mergeLwwItems(itemsRef.current, itemResponse);
+    const nextReminders = mergeLwwReminders(remindersRef.current, reminderResponse);
+    itemsRef.current = nextItems;
+    remindersRef.current = nextReminders;
+    setItems(nextItems);
     setPendingWrites(pendingResponse);
     setPlaces(placeResponse);
     setRepeatRules(repeatResponse);
     setOutboxMessages(outboxResponse);
-    setReminders(reminderResponse);
+    setReminders(nextReminders);
     writeLocalCache({
-      items: itemResponse,
+      items: nextItems,
       outbox_messages: outboxResponse,
       places: placeResponse,
-      reminders: reminderResponse,
+      reminders: nextReminders,
       repeat_rules: repeatResponse,
       sync_cursor: syncCursorRef.current,
       write_requests: pendingResponse,
@@ -1472,6 +1478,34 @@ function parseRealtimeMessage(
     return null;
   }
   return null;
+}
+
+function mergeLwwItems(current: Item[], incoming: Item[]) {
+  return mergeLwwById(current, incoming, (left, right) => {
+    if (left.version !== right.version) {
+      return right.version > left.version;
+    }
+    return Date.parse(right.updated_at) >= Date.parse(left.updated_at);
+  });
+}
+
+function mergeLwwReminders(current: Reminder[], incoming: Reminder[]) {
+  return mergeLwwById(current, incoming, (left, right) => right.version > left.version);
+}
+
+function mergeLwwById<T extends { id: string }>(
+  current: T[],
+  incoming: T[],
+  isIncomingNewer: (current: T, incoming: T) => boolean,
+) {
+  const merged = new Map<string, T>(current.map((entry) => [entry.id, entry]));
+  for (const entry of incoming) {
+    const existing = merged.get(entry.id);
+    if (!existing || isIncomingNewer(existing, entry)) {
+      merged.set(entry.id, entry);
+    }
+  }
+  return [...merged.values()];
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
