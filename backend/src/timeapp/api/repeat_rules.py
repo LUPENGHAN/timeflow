@@ -5,12 +5,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 
 from timeapp.api.dependencies import get_identity, get_timeflow_app
+from timeapp.api.errors import http_error
 from timeapp.api.schemas import (
     RepeatRuleCreateRequest,
     RepeatRuleCreateResponse,
     RepeatRuleResponse,
 )
-from timeapp.application.service import TimeflowApplication
+from timeapp.application.service import ApplicationError, TimeflowApplication
 from timeapp.domain.models import Identity
 
 router = APIRouter(prefix="/repeat-rules", tags=["repeat-rules"])
@@ -36,13 +37,16 @@ async def create_repeat_rule(
 ) -> RepeatRuleCreateResponse:
     """Create a repeat rule skeleton record."""
 
-    repeat_rule = app.create_repeat_rule(
-        identity=identity,
-        pattern=request.pattern,
-        weekdays=request.weekdays,
-        time_of_day=request.time_of_day,
-        series_status=request.series_status,
-    )
+    try:
+        repeat_rule = app.create_repeat_rule(
+            identity=identity,
+            pattern=request.pattern,
+            weekdays=request.weekdays,
+            time_of_day=request.time_of_day,
+            series_status=request.series_status,
+        )
+    except ApplicationError as error:
+        raise http_error(error) from error
     return RepeatRuleCreateResponse(
         repeat_rule=RepeatRuleResponse.from_domain(repeat_rule),
     )

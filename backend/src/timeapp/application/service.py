@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -41,6 +42,12 @@ from timeapp.domain.models import (
     VoiceCommand,
     WriteRequest,
 )
+
+
+REPEAT_PATTERNS = {"daily", "weekdays", "custom_weekdays"}
+REPEAT_SERIES_STATUSES = {"active", "paused", "stopped"}
+REPEAT_TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+WORKWEEK_DAYS = [1, 2, 3, 4, 5]
 
 
 class ApplicationError(RuntimeError):
@@ -518,19 +525,75 @@ class TimeflowApplication:
     ) -> RepeatRule:
         """Create a lightweight repeat-rule skeleton record."""
 
+        normalized_pattern = self._normalize_repeat_pattern(pattern)
+        normalized_weekdays = self._normalize_repeat_weekdays(normalized_pattern, weekdays)
+        normalized_time_of_day = self._normalize_repeat_time_of_day(time_of_day)
+        normalized_series_status = self._normalize_repeat_series_status(series_status)
+
         now = datetime.now(UTC)
         repeat_rule = RepeatRule(
             id=str(uuid4()),
             user_id=identity.user_id,
-            pattern=pattern,
-            weekdays=weekdays or [],
-            time_of_day=time_of_day,
-            series_status=series_status,
+            pattern=normalized_pattern,
+            weekdays=normalized_weekdays,
+            time_of_day=normalized_time_of_day,
+            series_status=normalized_series_status,
             created_at=now,
             updated_at=now,
         )
         self.store.add_repeat_rule(repeat_rule)
         return repeat_rule
+
+    def _normalize_repeat_pattern(self, pattern: str) -> str:
+        normalized = pattern.strip()
+        if normalized not in REPEAT_PATTERNS:
+            raise ApplicationError(
+                ErrorCode.INVALID_FIELD_VALUE,
+                "Repeat pattern must be daily, weekdays, or custom_weekdays.",
+            )
+        return normalized
+
+    def _normalize_repeat_weekdays(self, pattern: str, weekdays: list[int] | None) -> list[int]:
+        if pattern == "daily":
+            return []
+        if pattern == "weekdays":
+            return list(WORKWEEK_DAYS)
+
+        normalized = sorted(set(weekdays or []))
+        if not normalized:
+            raise ApplicationError(
+                ErrorCode.MISSING_REQUIRED_FIELD,
+                "Custom weekday repeat rules require at least one weekday.",
+            )
+        if any(weekday < 1 or weekday > 7 for weekday in normalized):
+            raise ApplicationError(
+                ErrorCode.INVALID_FIELD_VALUE,
+                "Repeat weekdays must be between 1 and 7.",
+            )
+        return normalized
+
+    def _normalize_repeat_time_of_day(self, time_of_day: str | None) -> str:
+        if time_of_day is None or not time_of_day.strip():
+            raise ApplicationError(
+                ErrorCode.MISSING_REQUIRED_FIELD,
+                "Repeat rules require time_of_day.",
+            )
+        normalized = time_of_day.strip()
+        if not REPEAT_TIME_RE.fullmatch(normalized):
+            raise ApplicationError(
+                ErrorCode.INVALID_FIELD_VALUE,
+                "Repeat time must use HH:MM in 24-hour time.",
+            )
+        return normalized
+
+    def _normalize_repeat_series_status(self, series_status: str) -> str:
+        normalized = series_status.strip()
+        if normalized not in REPEAT_SERIES_STATUSES:
+            raise ApplicationError(
+                ErrorCode.INVALID_FIELD_VALUE,
+                "Repeat series status must be active, paused, or stopped.",
+            )
+        return normalized
 
     def create_reminder(
         self,

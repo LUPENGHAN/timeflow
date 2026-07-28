@@ -35,7 +35,9 @@ import {
   type Place,
   type OutboxMessage,
   type Reminder,
+  type RepeatPattern,
   type RepeatRule,
+  type RepeatSeriesStatus,
   type VoiceCommandResult,
   type WriteRequest,
 } from '../api/client';
@@ -133,9 +135,10 @@ export function HomeScreen() {
   const [placeBusy, setPlaceBusy] = useState(false);
   const [saveCurrentPlaceBusy, setSaveCurrentPlaceBusy] = useState(false);
   const [deletingPlaceId, setDeletingPlaceId] = useState<string | null>(null);
-  const [repeatPattern, setRepeatPattern] = useState('workdays');
+  const [repeatPattern, setRepeatPattern] = useState<RepeatPattern>('weekdays');
   const [repeatTimeOfDay, setRepeatTimeOfDay] = useState('09:00');
   const [repeatWeekdays, setRepeatWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [repeatSeriesStatus, setRepeatSeriesStatus] = useState<RepeatSeriesStatus>('active');
   const [repeatBusy, setRepeatBusy] = useState(false);
   const [degradeTitle, setDegradeTitle] = useState('到家取快递');
   const [degradePlaceText, setDegradePlaceText] = useState('家');
@@ -622,13 +625,24 @@ export function HomeScreen() {
   }
 
   async function handleCreateRepeatRule() {
-    if (!repeatPattern.trim() || repeatBusy) {
+    if (repeatBusy) {
       return;
     }
 
     const timeOfDay = repeatTimeOfDay.trim();
-    if (timeOfDay && !/^\d{2}:\d{2}$/.test(timeOfDay)) {
-      setBanner('重复时间格式应为 HH:MM');
+    if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(timeOfDay)) {
+      setBanner('重复时间格式应为 24 小时 HH:MM');
+      return;
+    }
+
+    const weekdays =
+      repeatPattern === 'daily'
+        ? []
+        : repeatPattern === 'weekdays'
+          ? [1, 2, 3, 4, 5]
+          : repeatWeekdays;
+    if (repeatPattern === 'custom_weekdays' && weekdays.length === 0) {
+      setBanner('请至少选择一个周几');
       return;
     }
 
@@ -636,9 +650,10 @@ export function HomeScreen() {
     setBanner(null);
     try {
       await createRepeatRule({
-        pattern: repeatPattern.trim(),
-        time_of_day: timeOfDay || null,
-        weekdays: repeatWeekdays,
+        pattern: repeatPattern,
+        series_status: repeatSeriesStatus,
+        time_of_day: timeOfDay,
+        weekdays,
       });
       await refresh();
       setBanner('重复规则已保存');
@@ -1075,36 +1090,63 @@ export function HomeScreen() {
             <Text style={styles.sectionTitle}>重复规则</Text>
             <Text style={styles.subtle}>{repeatRules.length} 项</Text>
           </View>
-          <TextInput
-            value={repeatPattern}
-            onChangeText={setRepeatPattern}
-            placeholder="规则名称，例如 workdays"
-            placeholderTextColor={colors.muted}
-            style={styles.input}
-          />
           <View style={styles.placePicker}>
-            {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
-              const selected = repeatWeekdays.includes(weekday);
+            {(['daily', 'weekdays', 'custom_weekdays'] as const).map((pattern) => {
+              const selected = repeatPattern === pattern;
               return (
                 <Pressable
-                  key={weekday}
-                  onPress={() => handleToggleRepeatWeekday(weekday)}
+                  key={pattern}
+                  onPress={() => setRepeatPattern(pattern)}
                   style={[styles.placeChip, selected && styles.placeChipActive]}
                 >
                   <Text style={[styles.placeChipText, selected && styles.placeChipTextActive]}>
-                    {weekdayLabel(weekday)}
+                    {repeatPatternLabel(pattern)}
                   </Text>
                 </Pressable>
               );
             })}
           </View>
+          {repeatPattern === 'custom_weekdays' ? (
+            <View style={styles.placePicker}>
+              {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
+                const selected = repeatWeekdays.includes(weekday);
+                return (
+                  <Pressable
+                    key={weekday}
+                    onPress={() => handleToggleRepeatWeekday(weekday)}
+                    style={[styles.placeChip, selected && styles.placeChipActive]}
+                  >
+                    <Text style={[styles.placeChipText, selected && styles.placeChipTextActive]}>
+                      {weekdayLabel(weekday)}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
           <TextInput
             value={repeatTimeOfDay}
             onChangeText={setRepeatTimeOfDay}
-            placeholder="触发时间，例如 09:00，可选"
+            placeholder="触发时间，例如 09:00"
             placeholderTextColor={colors.muted}
             style={styles.input}
           />
+          <View style={styles.placePicker}>
+            {(['active', 'paused', 'stopped'] as const).map((status) => {
+              const selected = repeatSeriesStatus === status;
+              return (
+                <Pressable
+                  key={status}
+                  onPress={() => setRepeatSeriesStatus(status)}
+                  style={[styles.placeChip, selected && styles.placeChipActive]}
+                >
+                  <Text style={[styles.placeChipText, selected && styles.placeChipTextActive]}>
+                    {seriesStatusLabel(status)}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
           <Pressable
             onPress={handleCreateRepeatRule}
             style={[styles.primaryButton, repeatBusy && styles.disabledButton]}
@@ -1118,7 +1160,7 @@ export function HomeScreen() {
                 <View key={repeatRule.id} style={styles.placeRow}>
                   <View style={styles.placeBody}>
                     <View style={styles.itemHeader}>
-                      <Text style={styles.itemTitle}>{repeatRule.pattern}</Text>
+                      <Text style={styles.itemTitle}>{repeatPatternLabel(repeatRule.pattern)}</Text>
                       <Text style={styles.itemKind}>
                         {seriesStatusLabel(repeatRule.series_status)}
                       </Text>
@@ -2325,16 +2367,32 @@ function weekdayLabel(weekday: number) {
   return ['一', '二', '三', '四', '五', '六', '日'][weekday - 1] ?? String(weekday);
 }
 
-function repeatRuleSummary(repeatRule: RepeatRule) {
-  const weekdays =
-    repeatRule.weekdays.length > 0
-      ? repeatRule.weekdays.map((weekday) => `周${weekdayLabel(weekday)}`).join('、')
-      : '每天';
-  return repeatRule.time_of_day ? `${weekdays} · ${repeatRule.time_of_day}` : weekdays;
+function repeatPatternLabel(pattern: RepeatPattern) {
+  if (pattern === 'daily') {
+    return '每天';
+  }
+  if (pattern === 'weekdays') {
+    return '工作日';
+  }
+  return '自定义周几';
 }
 
-function seriesStatusLabel(status: string) {
-  return status === 'active' ? '启用' : status;
+function repeatRuleSummary(repeatRule: RepeatRule) {
+  const pattern =
+    repeatRule.pattern === 'custom_weekdays' && repeatRule.weekdays.length > 0
+      ? repeatRule.weekdays.map((weekday) => `周${weekdayLabel(weekday)}`).join('、')
+      : repeatPatternLabel(repeatRule.pattern);
+  return repeatRule.time_of_day ? `${pattern} · ${repeatRule.time_of_day}` : pattern;
+}
+
+function seriesStatusLabel(status: RepeatSeriesStatus) {
+  if (status === 'active') {
+    return '启用';
+  }
+  if (status === 'paused') {
+    return '暂停';
+  }
+  return '停止';
 }
 
 function outboxMessageSummary(message: OutboxMessage) {

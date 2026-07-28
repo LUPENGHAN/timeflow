@@ -89,12 +89,15 @@ export type Place = {
   description: string | null;
 };
 
+export type RepeatPattern = 'daily' | 'weekdays' | 'custom_weekdays';
+export type RepeatSeriesStatus = 'active' | 'paused' | 'stopped';
+
 export type RepeatRule = {
   id: string;
-  pattern: string;
+  pattern: RepeatPattern;
   weekdays: number[];
   time_of_day: string | null;
-  series_status: string;
+  series_status: RepeatSeriesStatus;
 };
 
 export type LocalCache = {
@@ -291,10 +294,10 @@ export function listRepeatRules() {
 }
 
 export function createRepeatRule(input: {
-  pattern: string;
+  pattern: RepeatPattern;
   weekdays?: number[];
-  time_of_day?: string | null;
-  series_status?: string;
+  time_of_day: string;
+  series_status?: RepeatSeriesStatus;
 }) {
   return apiFetch<{ repeat_rule: RepeatRule }>('/repeat-rules', {
     body: JSON.stringify(input),

@@ -10,6 +10,7 @@ class ErrorCode(StrEnum):
     UNKNOWN_ENTITY = "unknown_entity"
     PERMISSION_DENIED = "permission_denied"
     MISSING_REQUIRED_FIELD = "missing_required_field"
+    INVALID_FIELD_VALUE = "invalid_field_value"
     WRITE_REQUEST_NOT_FOUND = "write_request_not_found"
     WRITE_REQUEST_NOT_PENDING = "write_request_not_pending"
     WRITE_REQUEST_EXPIRED = "write_request_expired"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,10 @@ from timeapp.domain.models import (
     VoiceCommand,
     WriteRequest,
 )
+
+Weekday = Annotated[int, Field(ge=1, le=7)]
+RepeatPatternValue = Literal["daily", "weekdays", "custom_weekdays"]
+RepeatSeriesStatusValue = Literal["active", "paused", "stopped"]
 
 
 class VoiceCommandCreateRequest(BaseModel):
@@ -404,10 +408,10 @@ class RepeatRuleResponse(BaseModel):
 class RepeatRuleCreateRequest(BaseModel):
     """Create a repeat rule skeleton record."""
 
-    pattern: str = Field(min_length=1)
-    weekdays: list[int] = Field(default_factory=list)
-    time_of_day: str | None = None
-    series_status: str = "active"
+    pattern: RepeatPatternValue
+    weekdays: list[Weekday] = Field(default_factory=list)
+    time_of_day: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    series_status: RepeatSeriesStatusValue = "active"
 
 
 class RepeatRuleCreateResponse(BaseModel):
