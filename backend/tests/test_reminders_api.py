@@ -154,3 +154,55 @@ def test_place_reminder_can_be_armed_before_delivery() -> None:
         assert [event["event_type"] for event in body["events"]] == ["reminder.armed"]
 
     app.dependency_overrides.clear()
+
+
+def test_notification_registration_failure_requests_fallback() -> None:
+    """Local notification registration failures should request cloud fallback."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/items",
+            json={"type": "todo", "title": "交材料"},
+        )
+        assert created.status_code == 200
+        item_id = created.json()["item"]["id"]
+        trigger_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+
+        reminder_response = client.post(
+            "/api/v1/reminders",
+            json={
+                "item_id": item_id,
+                "trigger_type": "time",
+                "trigger_at": trigger_at,
+                "priority": "normal",
+            },
+        )
+        assert reminder_response.status_code == 200
+        reminder = reminder_response.json()["reminder"]
+
+        failed = client.post(
+            f"/api/v1/reminders/{reminder['id']}/actions",
+            json={
+                "action": "registration_failed",
+                "failed_reason": "permission_denied",
+                "fallback_after_seconds": 120,
+            },
+        )
+        assert failed.status_code == 200
+        body = failed.json()
+        failed_reminder = body["reminder"]
+        assert failed_reminder["status"] == "failed"
+        assert failed_reminder["local_registration_status"] == "failed"
+        assert failed_reminder["failed_reason"] == "permission_denied"
+        assert failed_reminder["fallback_status"] == "requested"
+        assert failed_reminder["fallback_after_seconds"] == 120
+        assert failed_reminder["fallback_requested_at"] is not None
+        assert [event["event_type"] for event in body["events"]] == [
+            "notification.registration.failed",
+            "notification.fallback.requested",
+        ]
+
+    app.dependency_overrides.clear()
