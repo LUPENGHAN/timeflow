@@ -111,6 +111,17 @@ export type LocalCache = {
 };
 
 const LOCAL_CACHE_KEY = 'timeflow.local-cache.v1';
+const OFFLINE_WRITE_QUEUE_KEY = 'timeflow.offline-write-queue.v1';
+
+export type OfflineWriteRequestDraft = {
+  candidate_payload: Record<string, unknown>;
+  source_command_id: string;
+};
+
+export type OfflineWriteRequest = OfflineWriteRequestDraft & {
+  created_at: string;
+  id: string;
+};
 
 export function readLocalCache(): LocalCache | null {
   if (typeof globalThis.localStorage === 'undefined') {
@@ -147,6 +158,63 @@ export function writeLocalCache(cache: LocalCache) {
   } catch {
     // Cache is best-effort only.
   }
+}
+
+export function readOfflineWriteQueue(): OfflineWriteRequest[] {
+  if (typeof globalThis.localStorage === 'undefined') {
+    return [];
+  }
+
+  try {
+    const raw = globalThis.localStorage.getItem(OFFLINE_WRITE_QUEUE_KEY);
+    if (!raw) {
+      return [];
+    }
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter(isOfflineWriteRequest);
+  } catch {
+    return [];
+  }
+}
+
+export function writeOfflineWriteQueue(queue: OfflineWriteRequest[]) {
+  if (typeof globalThis.localStorage === 'undefined') {
+    return;
+  }
+
+  try {
+    globalThis.localStorage.setItem(OFFLINE_WRITE_QUEUE_KEY, JSON.stringify(queue));
+  } catch {
+    // Queue is best-effort only.
+  }
+}
+
+export function enqueueOfflineWriteRequest(draft: OfflineWriteRequestDraft) {
+  const entry: OfflineWriteRequest = {
+    ...draft,
+    created_at: new Date().toISOString(),
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+  };
+  const queue = [...readOfflineWriteQueue(), entry];
+  writeOfflineWriteQueue(queue);
+  return entry;
+}
+
+function isOfflineWriteRequest(value: unknown): value is OfflineWriteRequest {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const candidate = value as Partial<OfflineWriteRequest>;
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.created_at === 'string' &&
+    typeof candidate.source_command_id === 'string' &&
+    typeof candidate.candidate_payload === 'object' &&
+    candidate.candidate_payload !== null
+  );
 }
 
 export type HealthResponse = {

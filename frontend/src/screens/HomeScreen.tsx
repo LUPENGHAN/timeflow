@@ -21,6 +21,7 @@ import {
   createVoiceCommand,
   deletePlace,
   degradePermission,
+  enqueueOfflineWriteRequest,
   getHealth,
   getRealtimeUrl,
   getSwaggerUrl,
@@ -30,10 +31,13 @@ import {
   listPlaces,
   listReminders,
   listRepeatRules,
+  readOfflineWriteQueue,
   readLocalCache,
   rejectWriteRequest,
   updateWriteRequest,
+  writeOfflineWriteQueue,
   writeLocalCache,
+  type OfflineWriteRequest,
   type Item,
   type Place,
   type OutboxMessage,
@@ -147,6 +151,9 @@ export function HomeScreen() {
   const [degradeTitle, setDegradeTitle] = useState('到家取快递');
   const [degradePlaceText, setDegradePlaceText] = useState('家');
   const [degradeBusy, setDegradeBusy] = useState(false);
+  const [offlineWriteQueue, setOfflineWriteQueue] = useState<OfflineWriteRequest[]>(
+    () => readOfflineWriteQueue(),
+  );
   const itemsRef = useRef<Item[]>(initialCache?.items ?? []);
   const remindersRef = useRef<Reminder[]>(initialCache?.reminders ?? []);
 
@@ -382,6 +389,37 @@ export function HomeScreen() {
     [refresh],
   );
 
+  const flushOfflineWriteQueue = useCallback(async () => {
+    if (connection !== 'online' || offlineWriteQueue.length === 0) {
+      return;
+    }
+
+    const remaining: OfflineWriteRequest[] = [];
+    let flushedCount = 0;
+    for (const queuedRequest of offlineWriteQueue) {
+      try {
+        await createWriteRequest({
+          candidate_payload: queuedRequest.candidate_payload,
+          source_command_id: queuedRequest.source_command_id,
+        });
+        flushedCount += 1;
+      } catch {
+        remaining.push(queuedRequest);
+      }
+    }
+
+    if (flushedCount > 0 || remaining.length !== offlineWriteQueue.length) {
+      setOfflineWriteQueue(remaining);
+      writeOfflineWriteQueue(remaining);
+      await refresh();
+      setBanner(
+        remaining.length === 0
+          ? `已补写 ${flushedCount} 条离线写入`
+          : `已补写 ${flushedCount} 条，仍有 ${remaining.length} 条离线写入待重试`,
+      );
+    }
+  }, [connection, offlineWriteQueue, refresh]);
+
   useEffect(() => {
     const receivedListener = Notifications.addNotificationReceivedListener((notification) => {
       const reminderId = notification.request.content.data?.reminderId;
@@ -403,6 +441,18 @@ export function HomeScreen() {
     };
   }, [markReminderDelivered]);
 
+  useEffect(() => {
+    if (connection === 'online' && socketState === 'connected') {
+      const flushTimer = setTimeout(() => {
+        flushOfflineWriteQueue().catch(() => {
+          setBanner('离线写入回放失败');
+        });
+      }, 0);
+      return () => clearTimeout(flushTimer);
+    }
+    return undefined;
+  }, [connection, flushOfflineWriteQueue, socketState]);
+
   async function handlePrepareCreateItem() {
     if (!title.trim() || loading) {
       return;
@@ -411,22 +461,35 @@ export function HomeScreen() {
     setLoading(true);
     setBanner(null);
     try {
+      const candidatePayload = {
+        item: {
+          description: description.trim() || null,
+          due_at: null,
+          end_at: null,
+          place_text: null,
+          priority: 'normal',
+          start_at: null,
+          title: title.trim(),
+          type: itemType,
+        },
+        operation: itemType === 'todo' ? 'create_todo' : 'create_calendar_event',
+        source_text: 'manual quick add',
+      };
+      if (connection !== 'online') {
+        const queuedRequest = enqueueOfflineWriteRequest({
+          candidate_payload: candidatePayload,
+          source_command_id: `manual-create-${Date.now()}`,
+        });
+        setOfflineWriteQueue((current) => [...current, queuedRequest]);
+        setTitle('');
+        setDescription('');
+        setBanner('当前离线，已加入补写队列');
+        return;
+      }
+
       await createWriteRequest({
         source_command_id: `manual-create-${Date.now()}`,
-        candidate_payload: {
-          item: {
-            description: description.trim() || null,
-            due_at: null,
-            end_at: null,
-            place_text: null,
-            priority: 'normal',
-            start_at: null,
-            title: title.trim(),
-            type: itemType,
-          },
-          operation: itemType === 'todo' ? 'create_todo' : 'create_calendar_event',
-          source_text: 'manual quick add',
-        },
+        candidate_payload: candidatePayload,
       });
       setTitle('');
       setDescription('');
@@ -1366,12 +1429,19 @@ export function HomeScreen() {
           )}
         </View>
 
-        {pendingWrites.length > 0 ? (
+        {pendingWrites.length > 0 || offlineWriteQueue.length > 0 ? (
           <View style={styles.pendingSection}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>待确认</Text>
-              <Text style={styles.subtle}>{pendingWrites.length} 项</Text>
+              <Text style={styles.subtle}>
+                {pendingWrites.length + offlineWriteQueue.length} 项
+              </Text>
             </View>
+            {offlineWriteQueue.length > 0 ? (
+              <Text style={styles.subtle}>
+                离线队列 {offlineWriteQueue.length} 项，恢复连接后自动补写
+              </Text>
+            ) : null}
             {pendingWrites.map((writeRequest) => (
               <PendingWriteRow
                 key={writeRequest.id}
