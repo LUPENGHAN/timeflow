@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from timeapp.domain.enums import FallbackStatus
 from timeapp.domain.models import Reminder
 
 
@@ -43,7 +44,30 @@ class VoicePolicy:
 
 
 class CloudFallbackPolicy:
-    """Skeleton policy for P2 cloud delivery channels."""
+    """Minimal P0 fallback policy for recording cloud handoff requests."""
+
+    def should_request(self, action: str) -> bool:
+        """Return whether a reminder action should queue fallback."""
+
+        return action in {"failed", "registration_failed", "local_unavailable"}
+
+    def request(
+        self,
+        reminder: Reminder,
+        now: datetime,
+        fallback_after_seconds: int,
+        failed_reason: str | None,
+    ) -> dict[str, object]:
+        """Mark fallback as requested and return the payload to broadcast."""
+
+        reminder.fallback_status = FallbackStatus.REQUESTED
+        reminder.fallback_after_seconds = fallback_after_seconds
+        reminder.fallback_requested_at = now
+        return {
+            "reminder_id": reminder.id,
+            "fallback_after_seconds": fallback_after_seconds,
+            "failed_reason": failed_reason,
+        }
 
 
 class QuietPeriodPolicy:

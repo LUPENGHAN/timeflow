@@ -16,6 +16,7 @@ from timeapp.application.store import InMemoryStore, SqlAlchemyStore
 from timeapp.capabilities.calendar.handler import CalendarCapability
 from timeapp.capabilities.reminder.handler import ReminderCapability
 from timeapp.capabilities.todo.handler import TodoCapability
+from timeapp.context.policies import CloudFallbackPolicy
 from timeapp.domain.enums import (
     CommandAction,
     CommandEntity,
@@ -89,6 +90,7 @@ class TimeflowApplication:
         self.calendar = CalendarCapability()
         self.todo = TodoCapability()
         self.reminder = ReminderCapability()
+        self.cloud_fallback = CloudFallbackPolicy()
 
     def submit_voice_command(self, transcript: str, identity: Identity) -> VoiceCommandResult:
         """Accept transcript, parse command and create a write request if needed."""
@@ -870,7 +872,7 @@ class TimeflowApplication:
             reminder.status = ReminderStatus.CANCELLED
             reminder.cancelled_at = now
             event_type = DomainEventType.REMINDER_CANCELLED
-        elif action in {"failed", "registration_failed", "local_unavailable"}:
+        elif self.cloud_fallback.should_request(action):
             reminder.status = ReminderStatus.FAILED
             reminder.failed_reason = failed_reason or action
             reminder.local_registration_status = (
@@ -878,9 +880,12 @@ class TimeflowApplication:
                 if action == "local_unavailable"
                 else NotificationRegistrationStatus.FAILED
             )
-            reminder.fallback_status = FallbackStatus.REQUESTED
-            reminder.fallback_after_seconds = fallback_after_seconds
-            reminder.fallback_requested_at = now
+            fallback_payload = self.cloud_fallback.request(
+                reminder=reminder,
+                now=now,
+                fallback_after_seconds=fallback_after_seconds,
+                failed_reason=reminder.failed_reason,
+            )
             event_type = (
                 DomainEventType.NOTIFICATION_REGISTRATION_FAILED
                 if action == "registration_failed"
@@ -909,11 +914,7 @@ class TimeflowApplication:
                     DomainEventType.NOTIFICATION_FALLBACK_REQUESTED,
                     "reminder",
                     reminder.id,
-                    {
-                        "reminder_id": reminder.id,
-                        "fallback_after_seconds": reminder.fallback_after_seconds,
-                        "failed_reason": reminder.failed_reason,
-                    },
+                    fallback_payload,
                 )
             )
         self.store.add_events(events)
