@@ -1098,14 +1098,14 @@ infrastructure -> interface implementations
 
 ## 17. MS1 骨架清单
 
-- [ ] Expo 项目可启动，录音可用
-- [ ] FastAPI 项目可启动，健康检查可用
-- [ ] WS 连接可建立并接收事件
-- [ ] `voice_commands` / `write_requests` / `domain_events` 基础表可迁移
-- [ ] Mock ASR 和 Mock Parser 可运行
-- [ ] 日历 / 待办 / 提醒的最小写入链路可确认
-- [ ] 今日列表和待确认列表可实时刷新
-- [ ] 断线补拉可用
+- [x] Expo 项目可启动，录音可用
+- [x] FastAPI 项目可启动，健康检查可用
+- [x] WS 连接可建立并接收事件
+- [x] `voice_commands` / `write_requests` / `domain_events` 基础表可迁移
+- [x] Mock ASR 和 Mock Parser 可运行
+- [x] 日历 / 待办 / 提醒的最小写入链路可确认
+- [x] 今日列表和待确认列表可实时刷新
+- [x] 断线补拉可用
 
 ## 18. 后续扩展建议
 

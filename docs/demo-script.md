@@ -6,7 +6,7 @@ Backend:
 
 ```bash
 cd backend
-.venv/bin/uvicorn timeapp.main:app --reload
+python -m uvicorn timeapp.main:app --reload
 ```
 
 Frontend:
@@ -23,6 +23,7 @@ Set `EXPO_PUBLIC_API_URL` when using a device that cannot reach `127.0.0.1`.
 1. Health check
    - Open the app.
    - Confirm the header status changes to `Connected`.
+   - Open `/docs` and confirm Swagger loads.
 
 2. Manual item create
    - Add a `Todo` from `Quick add`.
@@ -53,19 +54,26 @@ Set `EXPO_PUBLIC_API_URL` when using a device that cannot reach `127.0.0.1`.
    - Verify it appears in the `Places` section.
 
 7. Repeat skeleton
-   - Save `workdays` as a repeat rule.
+   - Save `weekdays` as a repeat rule.
    - Verify it appears in the `Repeat` section.
 
 8. Sync skeleton
    - Call `GET /api/v1/events`.
    - Open `WS /api/v1/ws`.
    - Send `{"type":"sync.request","after":0}` and verify a `sync.response`.
+   - Disconnect and reconnect, then confirm the client replays `sync.request` automatically.
+
+9. Offline quick add
+   - Turn off network access.
+   - Add a todo from `Quick add`.
+   - Confirm it enters the offline queue.
+   - Restore network and confirm it is replayed.
 
 ## Known Risks
 
 - Voice is mock transcript input; real ASR/audio recording is not wired.
-- Local notifications, true location permissions and geofencing are skeleton-only.
+- Local notifications, true location permissions and geofencing are still local-device only.
 - Persistence-backed repositories are not active; the MVP runtime uses process-local memory.
 - Cloud fallback adapters are skeleton-only and do not send SMS, email or calls.
-- WS emits cursor sync responses, but mobile reconnect/backfill UI is still minimal.
+- WS reconnect/backfill, local cache, offline quick add queue, and Swagger entrypoint are wired.
 
