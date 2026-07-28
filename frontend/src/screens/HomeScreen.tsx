@@ -55,7 +55,7 @@ Notifications.setNotificationHandler({
 type ViewMode = 'today' | 'week' | 'month';
 type ItemType = 'todo' | 'calendar_event';
 type ConnectionState = 'checking' | 'online' | 'offline';
-type SocketState = 'connecting' | 'connected' | 'closed';
+type SocketState = 'connecting' | 'connected' | 'reconnecting' | 'closed';
 type DevicePermission = 'microphone' | 'notification' | 'location';
 type DevicePermissionState = 'checking' | 'granted' | 'denied' | 'undetermined' | 'unavailable';
 type ManualOperation =
@@ -195,41 +195,115 @@ export function HomeScreen() {
       });
     }, 0);
 
-    const socket = new WebSocket(getRealtimeUrl());
-    socket.onopen = () => {
-      if (active) {
-        setSocketState('connected');
-      }
-    };
-    socket.onclose = () => {
-      if (active) {
-        setSocketState('closed');
-      }
-    };
-    socket.onerror = () => {
-      if (active) {
-        setSocketState('closed');
-      }
-    };
-    socket.onmessage = (event) => {
-      const message = JSON.parse(String(event.data)) as { event_type?: string };
-      if (message.event_type === 'sync.response') {
-        refresh().catch(() => setBanner('同步失败'));
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let socket: WebSocket | null = null;
+    let reconnectAttempt = 0;
+
+    const scheduleReconnect = () => {
+      if (!active) {
         return;
       }
+      setSocketState('reconnecting');
+      const delayMs = Math.min(5000, 500 * 2 ** reconnectAttempt);
+      reconnectAttempt += 1;
+      reconnectTimer = setTimeout(connectRealtime, delayMs);
+    };
+
+    const requestSync = (target: WebSocket) => {
+      target.send(JSON.stringify({ after: syncCursorRef.current, type: 'sync.request' }));
+    };
+
+    const handleRealtimeMessage = (rawMessage: string) => {
+      const message = parseRealtimeMessage(rawMessage);
+      if (!message) {
+        return;
+      }
+
+      if (message.event_type === 'sync.response') {
+        const payload = message.payload;
+        const nextCursor =
+          payload && typeof payload.next_cursor === 'number' ? payload.next_cursor : null;
+        const events = Array.isArray(payload?.events) ? payload.events : [];
+        syncCursorRef.current =
+          nextCursor ??
+          events.reduce(
+            (cursor, event) =>
+              typeof event.version === 'number' ? Math.max(cursor, event.version) : cursor,
+            syncCursorRef.current,
+          );
+        refresh().catch(() => {
+          if (active) {
+            setBanner('同步失败');
+          }
+        });
+        return;
+      }
+
+      if (typeof message.version === 'number') {
+        syncCursorRef.current = Math.max(syncCursorRef.current, message.version);
+      }
+
       if (
         message.event_type &&
         message.event_type !== 'connection.ready' &&
         message.event_type !== 'connection.heartbeat'
       ) {
-        refresh().catch(() => setBanner('同步失败'));
+        refresh().catch(() => {
+          if (active) {
+            setBanner('同步失败');
+          }
+        });
       }
     };
+
+    const connectRealtime = () => {
+      if (!active) {
+        return;
+      }
+
+      setSocketState(reconnectAttempt === 0 ? 'connecting' : 'reconnecting');
+      const nextSocket = new WebSocket(getRealtimeUrl());
+      socket = nextSocket;
+      let reconnectScheduled = false;
+
+      nextSocket.onopen = () => {
+        if (!active) {
+          return;
+        }
+        reconnectAttempt = 0;
+        setSocketState('connected');
+        requestSync(nextSocket);
+      };
+      nextSocket.onclose = () => {
+        if (reconnectScheduled) {
+          return;
+        }
+        reconnectScheduled = true;
+        scheduleReconnect();
+      };
+      nextSocket.onerror = () => {
+        if (!active) {
+          return;
+        }
+        setSocketState('reconnecting');
+        nextSocket.close();
+      };
+      nextSocket.onmessage = (event) => {
+        if (active) {
+          handleRealtimeMessage(String(event.data));
+        }
+      };
+    };
+
+    connectRealtime();
 
     return () => {
       active = false;
       clearTimeout(initialLoadTimer);
-      socket.close();
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      socket?.close();
     };
   }, [refresh]);
 
@@ -265,6 +339,7 @@ export function HomeScreen() {
   const itemTitleById = useMemo(() => new Map(items.map((item) => [item.id, item.title])), [items]);
   const placeById = useMemo(() => new Map(places.map((place) => [place.id, place])), [places]);
   const processedNotificationIdsRef = useRef(new Set<string>());
+  const syncCursorRef = useRef(0);
   const visibleItems = useMemo(() => filterItemsByMode(items, viewMode), [items, viewMode]);
 
   const markReminderDelivered = useCallback(
@@ -1353,13 +1428,38 @@ function StatusPill({
   socketState: SocketState;
 }) {
   const online = connection === 'online' && socketState === 'connected';
+  const label = online
+    ? '已连接'
+    : socketState === 'connecting' || socketState === 'reconnecting'
+      ? '重连中'
+      : connection === 'checking'
+        ? '检查中'
+        : '离线';
   return (
     <View style={[styles.statusPill, online ? styles.statusPillOnline : styles.statusPillMuted]}>
       <Text style={[styles.statusText, online ? styles.statusTextOnline : styles.statusTextMuted]}>
-        {online ? '已连接' : connection === 'checking' ? '检查中' : '离线'}
+        {label}
       </Text>
     </View>
   );
+}
+
+function parseRealtimeMessage(
+  rawMessage: string,
+): { event_type?: string; payload?: { events?: unknown; next_cursor?: unknown }; version?: unknown } | null {
+  try {
+    const parsed = JSON.parse(rawMessage) as unknown;
+    if (parsed && typeof parsed === 'object') {
+      return parsed as {
+        event_type?: string;
+        payload?: { events?: unknown; next_cursor?: unknown };
+        version?: unknown;
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
 }
 
 function Metric({ label, value }: { label: string; value: number }) {
