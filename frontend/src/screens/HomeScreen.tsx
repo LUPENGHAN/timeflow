@@ -29,8 +29,10 @@ import {
   listPlaces,
   listReminders,
   listRepeatRules,
+  readLocalCache,
   rejectWriteRequest,
   updateWriteRequest,
+  writeLocalCache,
   type Item,
   type Place,
   type OutboxMessage,
@@ -93,15 +95,16 @@ type ReminderDraft = {
 };
 
 export function HomeScreen() {
+  const [initialCache] = useState(() => readLocalCache());
   const [connection, setConnection] = useState<ConnectionState>('checking');
   const [socketState, setSocketState] = useState<SocketState>('connecting');
   const [viewMode, setViewMode] = useState<ViewMode>('today');
-  const [items, setItems] = useState<Item[]>([]);
-  const [places, setPlaces] = useState<Place[]>([]);
-  const [repeatRules, setRepeatRules] = useState<RepeatRule[]>([]);
-  const [outboxMessages, setOutboxMessages] = useState<OutboxMessage[]>([]);
-  const [reminders, setReminders] = useState<Reminder[]>([]);
-  const [pendingWrites, setPendingWrites] = useState<WriteRequest[]>([]);
+  const [items, setItems] = useState<Item[]>(() => initialCache?.items ?? []);
+  const [places, setPlaces] = useState<Place[]>(() => initialCache?.places ?? []);
+  const [repeatRules, setRepeatRules] = useState<RepeatRule[]>(() => initialCache?.repeat_rules ?? []);
+  const [outboxMessages, setOutboxMessages] = useState<OutboxMessage[]>(() => initialCache?.outbox_messages ?? []);
+  const [reminders, setReminders] = useState<Reminder[]>(() => initialCache?.reminders ?? []);
+  const [pendingWrites, setPendingWrites] = useState<WriteRequest[]>(() => initialCache?.write_requests ?? []);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [itemType, setItemType] = useState<ItemType>('todo');
@@ -166,6 +169,15 @@ export function HomeScreen() {
     setRepeatRules(repeatResponse);
     setOutboxMessages(outboxResponse);
     setReminders(reminderResponse);
+    writeLocalCache({
+      items: itemResponse,
+      outbox_messages: outboxResponse,
+      places: placeResponse,
+      reminders: reminderResponse,
+      repeat_rules: repeatResponse,
+      sync_cursor: syncCursorRef.current,
+      write_requests: pendingResponse,
+    });
   }, []);
 
   const refreshDevicePermissions = useCallback(async () => {
@@ -339,7 +351,7 @@ export function HomeScreen() {
   const itemTitleById = useMemo(() => new Map(items.map((item) => [item.id, item.title])), [items]);
   const placeById = useMemo(() => new Map(places.map((place) => [place.id, place])), [places]);
   const processedNotificationIdsRef = useRef(new Set<string>());
-  const syncCursorRef = useRef(0);
+  const syncCursorRef = useRef(initialCache?.sync_cursor ?? 0);
   const visibleItems = useMemo(() => filterItemsByMode(items, viewMode), [items, viewMode]);
 
   const markReminderDelivered = useCallback(

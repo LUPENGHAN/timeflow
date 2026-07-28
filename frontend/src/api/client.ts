@@ -104,8 +104,50 @@ export type LocalCache = {
   items: Item[];
   reminders: Reminder[];
   places: Place[];
+  repeat_rules: RepeatRule[];
+  outbox_messages: OutboxMessage[];
   write_requests: WriteRequest[];
+  sync_cursor: number;
 };
+
+const LOCAL_CACHE_KEY = 'timeflow.local-cache.v1';
+
+export function readLocalCache(): LocalCache | null {
+  if (typeof globalThis.localStorage === 'undefined') {
+    return null;
+  }
+
+  try {
+    const raw = globalThis.localStorage.getItem(LOCAL_CACHE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw) as Partial<LocalCache>;
+    return {
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+      reminders: Array.isArray(parsed.reminders) ? parsed.reminders : [],
+      outbox_messages: Array.isArray(parsed.outbox_messages) ? parsed.outbox_messages : [],
+      places: Array.isArray(parsed.places) ? parsed.places : [],
+      repeat_rules: Array.isArray(parsed.repeat_rules) ? parsed.repeat_rules : [],
+      sync_cursor: typeof parsed.sync_cursor === 'number' ? parsed.sync_cursor : 0,
+      write_requests: Array.isArray(parsed.write_requests) ? parsed.write_requests : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function writeLocalCache(cache: LocalCache) {
+  if (typeof globalThis.localStorage === 'undefined') {
+    return;
+  }
+
+  try {
+    globalThis.localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Cache is best-effort only.
+  }
+}
 
 export type HealthResponse = {
   status: 'ok';
