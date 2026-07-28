@@ -387,4 +387,8 @@ export function getRealtimeUrl() {
   return `${API_BASE_URL.replace(/^http/, 'ws').replace(/\/$/, '')}/ws`;
 }
 
+export function getSwaggerUrl() {
+  return `${API_BASE_URL.replace(/\/api\/v1$/, '')}/docs`;
+}
+
 export { API_BASE_URL };

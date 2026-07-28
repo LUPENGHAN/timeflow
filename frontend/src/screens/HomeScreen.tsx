@@ -10,7 +10,7 @@ import {
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 
 import {
   applyReminderAction,
@@ -23,6 +23,7 @@ import {
   degradePermission,
   getHealth,
   getRealtimeUrl,
+  getSwaggerUrl,
   listItems,
   listOutboxMessages,
   listPendingWriteRequests,
@@ -757,6 +758,14 @@ export function HomeScreen() {
     }
   }
 
+  async function handleOpenDocs() {
+    try {
+      await Linking.openURL(getSwaggerUrl());
+    } catch {
+      setBanner('打开接口文档失败');
+    }
+  }
+
   function handleToggleRepeatWeekday(weekday: number) {
     setRepeatWeekdays((current) => {
       if (current.includes(weekday)) {
@@ -1007,7 +1016,12 @@ export function HomeScreen() {
             <Text style={styles.kicker}>Timeflow</Text>
             <Text style={styles.title}>日程与待办</Text>
           </View>
-          <StatusPill connection={connection} socketState={socketState} />
+          <View style={styles.toolbar}>
+            <Pressable onPress={handleOpenDocs} style={styles.smallButton}>
+              <Text style={styles.smallButtonText}>Swagger</Text>
+            </Pressable>
+            <StatusPill connection={connection} socketState={socketState} />
+          </View>
         </View>
 
         <View style={styles.metricsRow}>
