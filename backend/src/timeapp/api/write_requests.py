@@ -29,7 +29,7 @@ async def create_write_request(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> WriteRequestCreateResponse:
-    """Create a pending write request from a candidate payload."""
+    """创建写请求。"""
 
     write_request, events = app.create_write_request(
         identity,
@@ -50,7 +50,7 @@ async def update_write_request(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> ConfirmationResponse:
-    """Edit a pending write request without applying it."""
+    """更新写请求。"""
 
     try:
         result = app.update_write_request(
@@ -74,7 +74,7 @@ async def list_pending_write_requests(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> list[WriteRequestResponse]:
-    """Return pending write requests for the current user."""
+    """列出当前用户待确认的写请求。"""
 
     return [
         WriteRequestResponse.from_domain(write_request)
@@ -88,7 +88,7 @@ async def get_write_request(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> WriteRequestResponse:
-    """Return one write request for inspection."""
+    """按 ID 获取写请求。"""
 
     try:
         write_request = app.get_write_request(write_request_id, identity)
@@ -104,7 +104,7 @@ async def confirm_write_request(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> ConfirmationResponse:
-    """Confirm and apply a write request through active capability handlers."""
+    """确认写请求并应用变更。"""
 
     try:
         result = app.confirm_write_request(write_request_id, identity)
@@ -125,7 +125,7 @@ async def reject_write_request(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> ConfirmationResponse:
-    """Reject a pending write request."""
+    """拒绝写请求。"""
 
     try:
         result = app.reject_write_request(write_request_id, identity)

@@ -14,7 +14,7 @@ class LocalNotificationPolicy:
     channel = "local_notification"
 
     def notification_payload(self, reminder: Reminder) -> dict[str, str]:
-        """Return a minimal notification payload."""
+        """构造通知载荷。"""
 
         return {"reminder_id": reminder.id, "item_id": reminder.item_id}
 
@@ -23,14 +23,14 @@ class CooldownPolicy:
     """Minimal P0 duplicate guard and one-time snooze boundary."""
 
     def can_trigger(self, reminder: Reminder, now: datetime) -> bool:
-        """Return false when the reminder just triggered recently."""
+        """判断当前是否可以触发。"""
 
         if reminder.last_triggered_at is None:
             return True
         return reminder.last_triggered_at + timedelta(minutes=1) <= now
 
     def can_snooze(self, reminder: Reminder) -> bool:
-        """P0 allows one simple snooze."""
+        """判断当前是否可以延后提醒。"""
 
         return reminder.snooze_count == 0
 
@@ -47,7 +47,7 @@ class CloudFallbackPolicy:
     """Minimal P0 fallback policy for recording cloud handoff requests."""
 
     def should_request(self, action: str) -> bool:
-        """Return whether a reminder action should queue fallback."""
+        """判断是否应发起请求。"""
 
         return action in {"failed", "registration_failed", "local_unavailable"}
 
@@ -58,7 +58,7 @@ class CloudFallbackPolicy:
         fallback_after_seconds: int,
         failed_reason: str | None,
     ) -> dict[str, object]:
-        """Mark fallback as requested and return the payload to broadcast."""
+        """处理CloudFallbackPolicy相关逻辑。"""
 
         reminder.fallback_status = FallbackStatus.REQUESTED
         reminder.fallback_after_seconds = fallback_after_seconds

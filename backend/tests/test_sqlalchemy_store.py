@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from timeapp.application.service import TimeflowApplication
-from timeapp.application.store import SqlAlchemyStore
+from timeapp.application.store import SqlAlchemyStore, WriteRequestMemoryStore
 from timeapp.core.db import Base
 from timeapp.domain.enums import ItemType
 from timeapp.domain.models import Identity
@@ -18,7 +18,8 @@ def test_sqlalchemy_store_flushes_without_auto_commit() -> None:
     Base.metadata.create_all(engine)
 
     with Session(engine) as session:
-        app = TimeflowApplication(SqlAlchemyStore(session))
+        store = SqlAlchemyStore(session, write_requests=WriteRequestMemoryStore())
+        app = TimeflowApplication(store)
         app.create_item(
             identity=Identity(user_id="demo-user"),
             item_type=ItemType.TODO,

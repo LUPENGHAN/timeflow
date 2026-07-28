@@ -30,7 +30,7 @@ class TimeContextProvider:
     """Active P0 provider for current time and user timezone."""
 
     def current(self, timezone: str = "UTC") -> TimeContext:
-        """Return current context."""
+        """获取当前时间上下文。"""
 
         return TimeContext(now=datetime.now(UTC), timezone=timezone)
 
@@ -43,7 +43,7 @@ class PlaceContextProvider:
     """
 
     def from_label(self, label: str) -> PlaceContext:
-        """Create a label-only place context."""
+        """根据标签构造地点上下文。"""
 
         return PlaceContext(place_id=label, label=label)
 

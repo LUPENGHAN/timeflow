@@ -4,60 +4,41 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-from timeapp.application.parser import MockCommandParser
+from timeapp.ai.parser import LLMCommandParser, MockCommandParser
 from timeapp.application.reference_resolver import ReferenceResolver
-from timeapp.application.store import InMemoryStore, SqlAlchemyStore
+from timeapp.application.store import InMemoryStore, Store
+from timeapp.capabilities import item_common
 from timeapp.capabilities.calendar.handler import CalendarCapability
 from timeapp.capabilities.reminder.handler import ReminderCapability
 from timeapp.capabilities.todo.handler import TodoCapability
-from timeapp.context.policies import CloudFallbackPolicy
 from timeapp.domain.enums import (
     CommandAction,
     CommandEntity,
     DomainEventType,
-    FallbackStatus,
     ItemStatus,
     ItemType,
-    NotificationRegistrationStatus,
     ReminderPriority,
-    ReminderStatus,
     ReminderTriggerType,
     VoiceCommandStatus,
     WriteRequestStatus,
 )
+from timeapp.domain.errors import ApplicationError as ApplicationError
 from timeapp.domain.errors import ErrorCode
 from timeapp.domain.models import (
     Command,
     DomainEvent,
     Identity,
     Item,
-    Place,
     Reminder,
     RepeatRule,
     VoiceCommand,
     WriteRequest,
 )
-
-
-REPEAT_PATTERNS = {"daily", "weekdays", "custom_weekdays"}
-REPEAT_SERIES_STATUSES = {"active", "paused", "stopped"}
-REPEAT_TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
-WORKWEEK_DAYS = [1, 2, 3, 4, 5]
-
-
-class ApplicationError(RuntimeError):
-    """Application-layer error with a stable client-facing code."""
-
-    def __init__(self, code: ErrorCode, message: str) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
 
 
 @dataclass(slots=True)
@@ -83,17 +64,21 @@ class ConfirmationResult:
 class TimeflowApplication:
     """Explicit application orchestration shared by HTTP and WS entrypoints."""
 
-    def __init__(self, store: InMemoryStore | SqlAlchemyStore | None = None) -> None:
+    def __init__(
+        self,
+        store: Store | None = None,
+        parser: MockCommandParser | LLMCommandParser | None = None,
+    ) -> None:
+        """初始化实例。"""
         self.store = store or InMemoryStore()
-        self.parser = MockCommandParser()
+        self.parser = parser or MockCommandParser()
         self.reference_resolver = ReferenceResolver()
         self.calendar = CalendarCapability()
         self.todo = TodoCapability()
         self.reminder = ReminderCapability()
-        self.cloud_fallback = CloudFallbackPolicy()
 
     def submit_voice_command(self, transcript: str, identity: Identity) -> VoiceCommandResult:
-        """Accept transcript, parse command and create a write request if needed."""
+        """提交语音命令，解析后生成写请求或候选项。"""
 
         now = datetime.now(UTC)
         command = self.parser.parse(transcript, identity)
@@ -106,7 +91,6 @@ class TimeflowApplication:
             created_at=now,
             updated_at=now,
         )
-        self.store.add_voice_command(voice_command)
 
         status_event = self._event(
             DomainEventType.COMMAND_STATUS_CHANGED,
@@ -127,13 +111,12 @@ class TimeflowApplication:
                 candidates=candidates,
             )
 
-        candidates: list[Item] = []
+        match_candidates: list[Item] = []
         if command.action in {CommandAction.UPDATE, CommandAction.DELETE, CommandAction.COMPLETE}:
-            candidates = self.reference_resolver.resolve_item_candidates(command, self.store)
-            if not candidates:
+            match_candidates = self.reference_resolver.resolve_item_candidates(command, self.store)
+            if not match_candidates:
                 voice_command.status = VoiceCommandStatus.NEEDS_CLARIFICATION
                 voice_command.updated_at = datetime.now(UTC)
-                self.store.update_voice_command(voice_command)
                 events.append(
                     self._event(
                         DomainEventType.COMMAND_STATUS_CHANGED,
@@ -155,10 +138,9 @@ class TimeflowApplication:
                     candidates=[],
                 )
 
-            if len(candidates) > 1:
+            if len(match_candidates) > 1:
                 voice_command.status = VoiceCommandStatus.NEEDS_CLARIFICATION
                 voice_command.updated_at = datetime.now(UTC)
-                self.store.update_voice_command(voice_command)
                 events.append(
                     self._event(
                         DomainEventType.COMMAND_STATUS_CHANGED,
@@ -170,7 +152,7 @@ class TimeflowApplication:
                         },
                     )
                 )
-                candidate_payload = self._candidate_payload(command, candidates)
+                candidate_payload = self._candidate_payload(command, match_candidates)
                 write_request = WriteRequest(
                     id=str(uuid4()),
                     identity=identity,
@@ -202,10 +184,10 @@ class TimeflowApplication:
                     write_request,
                     events,
                     clarification="找到多个候选事项，请先选择要修改的对象。",
-                    candidates=candidates,
+                    candidates=match_candidates,
                 )
 
-        candidate_payload = self._candidate_payload(command, candidates)
+        candidate_payload = self._candidate_payload(command, match_candidates)
         write_request = WriteRequest(
             id=str(uuid4()),
             identity=identity,
@@ -234,7 +216,7 @@ class TimeflowApplication:
         return VoiceCommandResult(voice_command, command, write_request, events)
 
     def list_pending_write_requests(self, identity: Identity) -> list[WriteRequest]:
-        """List pending writes that still require user confirmation."""
+        """列出当前用户待确认的写请求。"""
 
         pending_requests = self.store.list_pending_write_requests(identity.user_id)
         active_requests: list[WriteRequest] = []
@@ -249,7 +231,7 @@ class TimeflowApplication:
         return active_requests
 
     def get_write_request(self, write_request_id: str, identity: Identity) -> WriteRequest:
-        """Return one write request owned by the current user."""
+        """按 ID 获取写请求。"""
 
         write_request = self.store.get_write_request(write_request_id)
         if write_request is None or write_request.identity.user_id != identity.user_id:
@@ -269,7 +251,7 @@ class TimeflowApplication:
     def confirm_write_request(
         self, write_request_id: str, identity: Identity
     ) -> ConfirmationResult:
-        """Apply a pending write request through active capability handlers."""
+        """确认写请求并应用变更。"""
 
         write_request = self._load_pending_request(write_request_id, identity)
         events = self._apply_write_request(write_request)
@@ -282,13 +264,18 @@ class TimeflowApplication:
             write_request.id,
             {"status": write_request.status.value},
         )
+        # item_common.update_item_fields() already persists its own event for these
+        # four operations, so `events` here is already in the DB -- only add the new
+        # applied_event, or it would insert the same event id twice. Every other
+        # operation (including create_reminder/create_todo_with_reminder) routes
+        # through capability `apply()`/`create()` methods that return events without
+        # persisting them, so this is the only place they get added.
         operation = str(write_request.candidate_payload.get("operation", ""))
         if operation in {
             "update_item",
             "complete_item",
             "cancel_complete_item",
             "delete_item",
-            "create_reminder",
         }:
             self.store.add_events([applied_event])
         else:
@@ -296,7 +283,7 @@ class TimeflowApplication:
         return ConfirmationResult(write_request, [*events, applied_event])
 
     def reject_write_request(self, write_request_id: str, identity: Identity) -> ConfirmationResult:
-        """Reject a pending write request without touching business facts."""
+        """拒绝写请求。"""
 
         write_request = self._load_pending_request(write_request_id, identity)
         write_request.status = WriteRequestStatus.REJECTED
@@ -319,7 +306,7 @@ class TimeflowApplication:
         identity: Identity,
         candidate_payload: dict[str, Any],
     ) -> ConfirmationResult:
-        """Edit a pending write request without applying business facts."""
+        """更新写请求。"""
 
         write_request = self._load_pending_request(write_request_id, identity)
         write_request.candidate_payload = candidate_payload
@@ -342,12 +329,12 @@ class TimeflowApplication:
         return ConfirmationResult(write_request, events)
 
     def list_items(self, identity: Identity) -> list[Item]:
-        """List user's calendar/todo items."""
+        """列出用户事项。"""
 
         return self.store.list_items(identity.user_id)
 
     def _query_items(self, command: Command) -> list[Item]:
-        """Return items matching a read-only voice query time window."""
+        """查询事项候选列表。"""
 
         start = command.time_range_start
         end = command.time_range_end
@@ -379,23 +366,19 @@ class TimeflowApplication:
         return sorted(results, key=self._item_query_sort_key)
 
     def _item_query_sort_key(self, item: Item) -> tuple[int, datetime, str]:
+        """生成事项排序键。"""
         anchor = item.start_at or item.due_at
         if anchor is None:
             return (1, item.updated_at, item.title)
         return (0, anchor, item.title)
 
-    def list_places(self, identity: Identity) -> list[Place]:
-        """List skeleton places for a user."""
-
-        return self.store.list_places(identity.user_id)
-
     def list_repeat_rules(self, identity: Identity) -> list[RepeatRule]:
-        """List repeat rules for a user."""
+        """列出用户重复规则。"""
 
         return self.store.list_repeat_rules(identity.user_id)
 
     def list_reminders(self, identity: Identity) -> list[Reminder]:
-        """List reminders for a user."""
+        """列出用户提醒。"""
 
         return self.store.list_reminders(identity.user_id)
 
@@ -409,113 +392,30 @@ class TimeflowApplication:
         end_at: datetime | None = None,
         due_at: datetime | None = None,
         place_text: str | None = None,
+        place_type: str | None = None,
+        latitude: str | None = None,
+        longitude: str | None = None,
+        accuracy_meters: int | None = None,
+        radius_meters: int = 100,
     ) -> tuple[Item, list[DomainEvent]]:
-        """Create a manual item without a confirmation gate."""
+        """创建事项。"""
 
-        now = datetime.now(UTC)
-        item = Item(
-            id=str(uuid4()),
-            user_id=identity.user_id,
+        return item_common.create_item(
+            self.store,
+            identity=identity,
             item_type=item_type,
             title=title,
             description=description,
-            status=ItemStatus.ACTIVE,
             start_at=start_at,
             end_at=end_at,
             due_at=due_at,
             place_text=place_text,
-            created_at=now,
-            updated_at=now,
-        )
-        self.store.add_item(item)
-        event = self._event(
-            DomainEventType.ITEM_CREATED,
-            "item",
-            item.id,
-            {"item": self._item_payload(item)},
-        )
-        self.store.add_events([event])
-        return item, [event]
-
-    def create_place(
-        self,
-        identity: Identity,
-        label: str,
-        place_type: str,
-        radius_meters: int = 100,
-        description: str | None = None,
-        latitude: str | None = None,
-        longitude: str | None = None,
-        accuracy_meters: int | None = None,
-    ) -> Place:
-        """Create a lightweight place skeleton record."""
-
-        now = datetime.now(UTC)
-        place = Place(
-            id=str(uuid4()),
-            user_id=identity.user_id,
-            label=label,
             place_type=place_type,
-            radius_meters=radius_meters,
-            description=description,
             latitude=latitude,
             longitude=longitude,
             accuracy_meters=accuracy_meters,
-            created_at=now,
-            updated_at=now,
+            radius_meters=radius_meters,
         )
-        self.store.add_place(place)
-        return place
-
-    def update_place(
-        self,
-        identity: Identity,
-        place_id: str,
-        label: str | None = None,
-        place_type: str | None = None,
-        radius_meters: int | None = None,
-        description: str | None = None,
-        latitude: str | None = None,
-        longitude: str | None = None,
-        accuracy_meters: int | None = None,
-    ) -> Place:
-        """Update an existing place owned by the current user."""
-
-        place = self.store.get_place(place_id)
-        if place is None or place.user_id != identity.user_id:
-            raise ApplicationError(
-                ErrorCode.PLACE_NOT_FOUND,
-                f"Place {place_id} was not found.",
-            )
-        if label is not None:
-            place.label = label
-        if place_type is not None:
-            place.place_type = place_type
-        if radius_meters is not None:
-            place.radius_meters = radius_meters
-        if description is not None:
-            place.description = description
-        if latitude is not None:
-            place.latitude = latitude
-        if longitude is not None:
-            place.longitude = longitude
-        if accuracy_meters is not None:
-            place.accuracy_meters = accuracy_meters
-        place.updated_at = datetime.now(UTC)
-        self.store.update_place(place)
-        return place
-
-    def delete_place(self, identity: Identity, place_id: str) -> Place:
-        """Delete an existing place owned by the current user."""
-
-        place = self.store.get_place(place_id)
-        if place is None or place.user_id != identity.user_id:
-            raise ApplicationError(
-                ErrorCode.PLACE_NOT_FOUND,
-                f"Place {place_id} was not found.",
-            )
-        self.store.delete_place(place.id)
-        return place
 
     def create_repeat_rule(
         self,
@@ -525,77 +425,16 @@ class TimeflowApplication:
         time_of_day: str | None = None,
         series_status: str = "active",
     ) -> RepeatRule:
-        """Create a lightweight repeat-rule skeleton record."""
+        """创建重复规则。"""
 
-        normalized_pattern = self._normalize_repeat_pattern(pattern)
-        normalized_weekdays = self._normalize_repeat_weekdays(normalized_pattern, weekdays)
-        normalized_time_of_day = self._normalize_repeat_time_of_day(time_of_day)
-        normalized_series_status = self._normalize_repeat_series_status(series_status)
-
-        now = datetime.now(UTC)
-        repeat_rule = RepeatRule(
-            id=str(uuid4()),
-            user_id=identity.user_id,
-            pattern=normalized_pattern,
-            weekdays=normalized_weekdays,
-            time_of_day=normalized_time_of_day,
-            series_status=normalized_series_status,
-            created_at=now,
-            updated_at=now,
+        return self.reminder.create_repeat_rule(
+            self.store,
+            identity=identity,
+            pattern=pattern,
+            weekdays=weekdays,
+            time_of_day=time_of_day,
+            series_status=series_status,
         )
-        self.store.add_repeat_rule(repeat_rule)
-        return repeat_rule
-
-    def _normalize_repeat_pattern(self, pattern: str) -> str:
-        normalized = pattern.strip()
-        if normalized not in REPEAT_PATTERNS:
-            raise ApplicationError(
-                ErrorCode.INVALID_FIELD_VALUE,
-                "Repeat pattern must be daily, weekdays, or custom_weekdays.",
-            )
-        return normalized
-
-    def _normalize_repeat_weekdays(self, pattern: str, weekdays: list[int] | None) -> list[int]:
-        if pattern == "daily":
-            return []
-        if pattern == "weekdays":
-            return list(WORKWEEK_DAYS)
-
-        normalized = sorted(set(weekdays or []))
-        if not normalized:
-            raise ApplicationError(
-                ErrorCode.MISSING_REQUIRED_FIELD,
-                "Custom weekday repeat rules require at least one weekday.",
-            )
-        if any(weekday < 1 or weekday > 7 for weekday in normalized):
-            raise ApplicationError(
-                ErrorCode.INVALID_FIELD_VALUE,
-                "Repeat weekdays must be between 1 and 7.",
-            )
-        return normalized
-
-    def _normalize_repeat_time_of_day(self, time_of_day: str | None) -> str:
-        if time_of_day is None or not time_of_day.strip():
-            raise ApplicationError(
-                ErrorCode.MISSING_REQUIRED_FIELD,
-                "Repeat rules require time_of_day.",
-            )
-        normalized = time_of_day.strip()
-        if not REPEAT_TIME_RE.fullmatch(normalized):
-            raise ApplicationError(
-                ErrorCode.INVALID_FIELD_VALUE,
-                "Repeat time must use HH:MM in 24-hour time.",
-            )
-        return normalized
-
-    def _normalize_repeat_series_status(self, series_status: str) -> str:
-        normalized = series_status.strip()
-        if normalized not in REPEAT_SERIES_STATUSES:
-            raise ApplicationError(
-                ErrorCode.INVALID_FIELD_VALUE,
-                "Repeat series status must be active, paused, or stopped.",
-            )
-        return normalized
 
     def create_reminder(
         self,
@@ -603,60 +442,20 @@ class TimeflowApplication:
         item_id: str,
         trigger_type: ReminderTriggerType,
         trigger_at: datetime | None = None,
-        place_id: str | None = None,
         priority: ReminderPriority = ReminderPriority.NORMAL,
     ) -> tuple[Reminder, list[DomainEvent]]:
-        """Create a reminder bound to an existing user item."""
+        """创建提醒（直接 API 路径，不经过 write-request 确认流程，需要自己持久化事件）。"""
 
-        item = self.store.get_item(item_id)
-        if item is None or item.user_id != identity.user_id:
-            raise ApplicationError(
-                ErrorCode.ITEM_NOT_FOUND,
-                f"Item {item_id} was not found.",
-            )
-        if trigger_type == ReminderTriggerType.TIME and trigger_at is None:
-            raise ApplicationError(
-                ErrorCode.MISSING_REQUIRED_FIELD,
-                "Time reminders require trigger_at.",
-            )
-        if trigger_type != ReminderTriggerType.TIME and place_id is None:
-            raise ApplicationError(
-                ErrorCode.MISSING_REQUIRED_FIELD,
-                "Place reminders require place_id.",
-            )
-
-        now = datetime.now(UTC)
-        initial_status = (
-            ReminderStatus.ARMED
-            if trigger_type in {ReminderTriggerType.ENTER_PLACE, ReminderTriggerType.LEAVE_PLACE}
-            else ReminderStatus.PENDING
-        )
-        event_type = (
-            DomainEventType.REMINDER_ARMED
-            if initial_status == ReminderStatus.ARMED
-            else DomainEventType.WRITE_REQUEST_UPDATED
-        )
-        reminder = Reminder(
-            id=str(uuid4()),
-            user_id=identity.user_id,
-            item_id=item.id,
+        reminder, events = self.reminder.create(
+            self.store,
+            identity=identity,
+            item_id=item_id,
             trigger_type=trigger_type,
             trigger_at=trigger_at,
-            place_id=place_id,
             priority=priority,
-            status=initial_status,
-            created_at=now,
-            updated_at=now,
         )
-        self.store.add_reminder(reminder)
-        event = self._event(
-            event_type,
-            "reminder",
-            reminder.id,
-            {"reminder": self._reminder_payload(reminder)},
-        )
-        self.store.add_events([event])
-        return reminder, [event]
+        self.store.add_events(events)
+        return reminder, events
 
     def degrade_permission(
         self,
@@ -666,33 +465,16 @@ class TimeflowApplication:
         title: str,
         place_text: str | None = None,
     ) -> tuple[Item, list[DomainEvent]]:
-        """Apply a P0 permission degradation path."""
+        """处理权限降级。"""
 
-        if permission != "location":
-            raise ApplicationError(
-                ErrorCode.PERMISSION_DENIED,
-                f"{permission} permission is denied.",
-            )
-        item, item_events = self.create_item(
+        return item_common.degrade_permission(
+            self.store,
             identity=identity,
-            item_type=ItemType.TODO,
+            permission=permission,
+            reason=reason,
             title=title,
             place_text=place_text,
         )
-        degraded_event = self._event(
-            DomainEventType.PERMISSION_DEGRADED,
-            "permission",
-            permission,
-            {
-                "permission": permission,
-                "reason": reason,
-                "degraded_to": "todo_with_text_place",
-                "item_id": item.id,
-                "place_text": place_text,
-            },
-        )
-        self.store.add_events([degraded_event])
-        return item, [*item_events, degraded_event]
 
     def create_write_request(
         self,
@@ -700,7 +482,7 @@ class TimeflowApplication:
         source_command_id: str,
         candidate_payload: dict[str, Any],
     ) -> tuple[WriteRequest, list[DomainEvent]]:
-        """Create a pending write request from a confirmed candidate payload."""
+        """创建写请求。"""
 
         now = datetime.now(UTC)
         command = self._command_from_candidate_payload(
@@ -745,26 +527,32 @@ class TimeflowApplication:
         end_at: datetime | None = None,
         due_at: datetime | None = None,
         place_text: str | None = None,
+        place_type: str | None = None,
+        latitude: str | None = None,
+        longitude: str | None = None,
+        accuracy_meters: int | None = None,
+        radius_meters: int | None = None,
         status: ItemStatus | None = None,
     ) -> tuple[Item, list[DomainEvent]]:
-        """Update an existing item and emit a domain event."""
+        """更新事项。"""
 
-        changes: dict[str, Any] = {}
-        if title is not None:
-            changes["title"] = title
-        if description is not None:
-            changes["description"] = description
-        if start_at is not None:
-            changes["start_at"] = start_at
-        if end_at is not None:
-            changes["end_at"] = end_at
-        if due_at is not None:
-            changes["due_at"] = due_at
-        if place_text is not None:
-            changes["place_text"] = place_text
-        if status is not None:
-            changes["status"] = status
-        return self.update_item_fields(identity, item_id, changes)
+        return item_common.update_item(
+            self.store,
+            identity=identity,
+            item_id=item_id,
+            title=title,
+            description=description,
+            start_at=start_at,
+            end_at=end_at,
+            due_at=due_at,
+            place_text=place_text,
+            place_type=place_type,
+            latitude=latitude,
+            longitude=longitude,
+            accuracy_meters=accuracy_meters,
+            radius_meters=radius_meters,
+            status=status,
+        )
 
     def update_item_fields(
         self,
@@ -772,61 +560,19 @@ class TimeflowApplication:
         item_id: str,
         changes: dict[str, Any],
     ) -> tuple[Item, list[DomainEvent]]:
-        """Update only explicitly provided item fields and emit a domain event."""
+        """按指定字段更新事项。"""
 
-        item = self.store.get_item(item_id)
-        if item is None or item.user_id != identity.user_id:
-            raise ApplicationError(
-                ErrorCode.ITEM_NOT_FOUND,
-                f"Item {item_id} was not found.",
-            )
-
-        if "title" in changes:
-            title = self._optional_str(changes.get("title"))
-            if title is None:
-                raise ApplicationError(
-                    ErrorCode.MISSING_REQUIRED_FIELD,
-                    "Item title cannot be empty.",
-                )
-            item.title = title
-        if "description" in changes:
-            item.description = self._nullable_str(changes.get("description"))
-        if "start_at" in changes:
-            item.start_at = self._nullable_datetime(changes.get("start_at"))
-        if "end_at" in changes:
-            item.end_at = self._nullable_datetime(changes.get("end_at"))
-        if "due_at" in changes:
-            item.due_at = self._nullable_datetime(changes.get("due_at"))
-        if "place_text" in changes:
-            item.place_text = self._nullable_str(changes.get("place_text"))
-        if "status" in changes:
-            status_value = changes.get("status")
-            item.status = (
-                status_value
-                if isinstance(status_value, ItemStatus)
-                else ItemStatus(str(status_value))
-            )
-        item.version += 1
-        item.updated_at = datetime.now(UTC)
-        self.store.update_item(item)
-        event = self._event(
-            DomainEventType.ITEM_UPDATED,
-            "item",
-            item.id,
-            {"item": self._item_payload(item)},
-        )
-        self.store.add_events([event])
-        return item, [event]
+        return item_common.update_item_fields(self.store, identity, item_id, changes)
 
     def delete_item(self, identity: Identity, item_id: str) -> tuple[Item, list[DomainEvent]]:
-        """Mark an item as deleted."""
+        """删除事项。"""
 
-        return self.update_item(identity, item_id, status=ItemStatus.DELETED)
+        return item_common.delete_item(self.store, identity, item_id)
 
     def complete_item(self, identity: Identity, item_id: str) -> tuple[Item, list[DomainEvent]]:
-        """Mark an item as completed."""
+        """将事项标记为已完成。"""
 
-        return self.update_item(identity, item_id, status=ItemStatus.COMPLETED)
+        return item_common.complete_item(self.store, identity, item_id)
 
     def apply_reminder_action(
         self,
@@ -838,94 +584,26 @@ class TimeflowApplication:
         snooze_minutes: int = 10,
         fallback_after_seconds: int = 300,
     ) -> tuple[Reminder, list[DomainEvent]]:
-        """Apply a client reminder action and emit sync/fallback events."""
+        """应用提醒动作。"""
 
-        reminder = self.store.get_reminder(reminder_id)
-        if reminder is None or reminder.user_id != identity.user_id:
-            raise ApplicationError(
-                ErrorCode.REMINDER_NOT_FOUND,
-                f"Reminder {reminder_id} was not found.",
-            )
-
-        now = datetime.now(UTC)
-        event_type = DomainEventType.WRITE_REQUEST_UPDATED
-
-        if action == "registered":
-            reminder.local_registration_status = NotificationRegistrationStatus.REGISTERED
-            reminder.local_notification_id = local_notification_id
-        elif action == "armed":
-            reminder.status = ReminderStatus.ARMED
-            event_type = DomainEventType.REMINDER_ARMED
-        elif action == "delivered":
-            reminder.status = ReminderStatus.DELIVERED
-            reminder.last_triggered_at = now
-            event_type = DomainEventType.REMINDER_DELIVERED
-        elif action == "dismiss":
-            reminder.status = ReminderStatus.DISMISSED
-            event_type = DomainEventType.REMINDER_DISMISSED
-        elif action == "snooze":
-            reminder.status = ReminderStatus.SNOOZED
-            reminder.snooze_count += 1
-            reminder.trigger_at = now + timedelta(minutes=snooze_minutes)
-            event_type = DomainEventType.REMINDER_SNOOZED
-        elif action == "cancel":
-            reminder.status = ReminderStatus.CANCELLED
-            reminder.cancelled_at = now
-            event_type = DomainEventType.REMINDER_CANCELLED
-        elif self.cloud_fallback.should_request(action):
-            reminder.status = ReminderStatus.FAILED
-            reminder.failed_reason = failed_reason or action
-            reminder.local_registration_status = (
-                NotificationRegistrationStatus.UNAVAILABLE
-                if action == "local_unavailable"
-                else NotificationRegistrationStatus.FAILED
-            )
-            fallback_payload = self.cloud_fallback.request(
-                reminder=reminder,
-                now=now,
-                fallback_after_seconds=fallback_after_seconds,
-                failed_reason=reminder.failed_reason,
-            )
-            event_type = (
-                DomainEventType.NOTIFICATION_REGISTRATION_FAILED
-                if action == "registration_failed"
-                else DomainEventType.REMINDER_FAILED
-            )
-        else:
-            raise ApplicationError(
-                ErrorCode.UNKNOWN_ACTION,
-                f"Unsupported reminder action {action}.",
-            )
-
-        reminder.version += 1
-        reminder.updated_at = now
-        self.store.update_reminder(reminder)
-        events = [
-            self._event(
-                event_type,
-                "reminder",
-                reminder.id,
-                {"reminder": self._reminder_payload(reminder)},
-            )
-        ]
-        if reminder.fallback_status == FallbackStatus.REQUESTED:
-            events.append(
-                self._event(
-                    DomainEventType.NOTIFICATION_FALLBACK_REQUESTED,
-                    "reminder",
-                    reminder.id,
-                    fallback_payload,
-                )
-            )
-        self.store.add_events(events)
-        return reminder, events
+        return self.reminder.apply_action(
+            self.store,
+            identity=identity,
+            reminder_id=reminder_id,
+            action=action,
+            failed_reason=failed_reason,
+            local_notification_id=local_notification_id,
+            snooze_minutes=snooze_minutes,
+            fallback_after_seconds=fallback_after_seconds,
+        )
 
     def list_events(self, after_cursor: int = 0) -> list[DomainEvent]:
-        """List domain events after a cursor."""
+        """列出事件。"""
 
         return self.store.list_events_after(after_cursor)
 
     def _load_pending_request(self, write_request_id: str, identity: Identity) -> WriteRequest:
+        """加载待处理写请求。"""
         write_request = self.store.get_write_request(write_request_id)
         if write_request is None or write_request.identity.user_id != identity.user_id:
             raise ApplicationError(
@@ -952,6 +630,7 @@ class TimeflowApplication:
         command: Command,
         candidates: list[Item] | None = None,
     ) -> dict[str, Any]:
+        """构建候选载荷。"""
         operation = str(command.payload.get("operation", ""))
         if not operation:
             raise ApplicationError(
@@ -987,13 +666,20 @@ class TimeflowApplication:
                 for candidate in candidates or []
             ]
             payload["candidates"] = [
-                self._item_payload(candidate) for candidate in candidates or []
+                item_common.item_payload(candidate) for candidate in candidates or []
             ]
         if "reminder" in command.payload:
-            payload["reminders"] = [command.payload["reminder"]]
+            reminder_payload = command.payload["reminder"]
+            payload["reminders"] = [reminder_payload]
+            place_ref = (
+                reminder_payload.get("place_ref") if isinstance(reminder_payload, dict) else None
+            )
+            if place_ref and not payload["item"].get("place_text"):
+                payload["item"]["place_text"] = place_ref
         return payload
 
     def _apply_write_request(self, write_request: WriteRequest) -> list[DomainEvent]:
+        """应用写请求。"""
         operation = str(write_request.candidate_payload.get("operation", ""))
         events: list[DomainEvent] = []
 
@@ -1009,11 +695,15 @@ class TimeflowApplication:
             todo_events = self.todo.apply(write_request, self.store)
             events.extend(todo_events)
             item_id = self._last_created_item_id(todo_events)
-            events.extend(self.reminder.apply(write_request, self.store, item_id))
+            events.extend(
+                self.reminder.apply_from_write_request(
+                    write_request, self.store, item_id_override=item_id
+                )
+            )
             return events
 
         if operation == "create_reminder":
-            return self._apply_reminder_operations(write_request)
+            return self.reminder.apply_from_write_request(write_request, self.store)
 
         if operation == "update_item":
             return self._apply_item_operations(write_request, "update")
@@ -1033,9 +723,10 @@ class TimeflowApplication:
         )
 
     def _apply_item_operations(self, write_request: WriteRequest, mode: str) -> list[DomainEvent]:
+        """应用事项操作。"""
         operations = write_request.candidate_payload.get("operations", [])
         if not isinstance(operations, list) or not operations:
-            target_id = self._optional_str(write_request.candidate_payload.get("target_id"))
+            target_id = item_common.optional_str(write_request.candidate_payload.get("target_id"))
             if target_id is None:
                 raise ApplicationError(
                     ErrorCode.MISSING_REQUIRED_FIELD,
@@ -1057,7 +748,7 @@ class TimeflowApplication:
         for operation in operations:
             if not isinstance(operation, dict):
                 continue
-            target_id = self._optional_str(operation.get("target_id"))
+            target_id = item_common.optional_str(operation.get("target_id"))
             if target_id is None:
                 continue
             changes = operation.get("changes", {})
@@ -1083,38 +774,8 @@ class TimeflowApplication:
 
         return events
 
-    def _apply_reminder_operations(self, write_request: WriteRequest) -> list[DomainEvent]:
-        target_id = self._optional_str(write_request.candidate_payload.get("target_id"))
-        if target_id is None:
-            raise ApplicationError(
-                ErrorCode.MISSING_REQUIRED_FIELD,
-                "Reminder target item is missing.",
-            )
-
-        reminder_payloads = write_request.candidate_payload.get("reminders", [])
-        if not isinstance(reminder_payloads, list) or not reminder_payloads:
-            reminder_payloads = [write_request.candidate_payload.get("reminder", {})]
-
-        events: list[DomainEvent] = []
-        for payload in reminder_payloads:
-            if not isinstance(payload, dict):
-                continue
-            trigger_type = ReminderTriggerType(str(payload.get("trigger_type", "time")))
-            priority = ReminderPriority(str(payload.get("priority", "normal")))
-            _, reminder_events = self.create_reminder(
-                identity=write_request.identity,
-                item_id=target_id,
-                trigger_type=trigger_type,
-                trigger_at=self._optional_datetime(payload.get("trigger_at")),
-                place_id=self._optional_str(payload.get("place_id"))
-                or self._optional_str(payload.get("place_ref")),
-                priority=priority,
-            )
-            events.extend(reminder_events)
-
-        return events
-
     def _last_created_item_id(self, events: list[DomainEvent]) -> str:
+        """提取最近创建的事项 ID。"""
         for event in reversed(events):
             if event.event_type == DomainEventType.ITEM_CREATED:
                 return str(event.payload["item"]["id"])
@@ -1127,6 +788,7 @@ class TimeflowApplication:
         aggregate_id: str,
         payload: dict[str, Any],
     ) -> DomainEvent:
+        """构造领域事件。"""
         return DomainEvent(
             id=str(uuid4()),
             event_type=event_type,
@@ -1138,6 +800,7 @@ class TimeflowApplication:
         )
 
     def _payload_hash(self, payload: dict[str, Any]) -> str:
+        """计算载荷哈希。"""
         encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str).encode()
         return hashlib.sha256(encoded).hexdigest()
 
@@ -1147,6 +810,7 @@ class TimeflowApplication:
         source_command_id: str,
         candidate_payload: dict[str, Any],
     ) -> Command:
+        """从候选载荷还原命令。"""
         operation = str(candidate_payload.get("operation", ""))
         item_payload = candidate_payload.get("item", {})
         if not isinstance(item_payload, dict):
@@ -1170,69 +834,11 @@ class TimeflowApplication:
             action=action,
             entity=entity,
             title=str(item_payload.get("title") or candidate_payload.get("title") or ""),
-            description=self._optional_str(item_payload.get("description")),
-            target_id=self._optional_str(candidate_payload.get("target_id")),
-            start_at=self._optional_datetime(item_payload.get("start_at")),
-            end_at=self._optional_datetime(item_payload.get("end_at")),
-            due_at=self._optional_datetime(item_payload.get("due_at")),
+            description=item_common.optional_str(item_payload.get("description")),
+            target_id=item_common.optional_str(candidate_payload.get("target_id")),
+            start_at=item_common.optional_datetime(item_payload.get("start_at")),
+            end_at=item_common.optional_datetime(item_payload.get("end_at")),
+            due_at=item_common.optional_datetime(item_payload.get("due_at")),
             payload=candidate_payload,
         )
 
-    def _optional_datetime(self, value: Any) -> datetime | None:
-        if not isinstance(value, str) or not value:
-            return None
-        return datetime.fromisoformat(value)
-
-    def _optional_str(self, value: Any) -> str | None:
-        return value if isinstance(value, str) and value else None
-
-    def _nullable_datetime(self, value: Any) -> datetime | None:
-        if value is None:
-            return None
-        if isinstance(value, datetime):
-            return value
-        return self._optional_datetime(value)
-
-    def _nullable_str(self, value: Any) -> str | None:
-        if value is None:
-            return None
-        if isinstance(value, str):
-            value = value.strip()
-            return value or None
-        return None
-
-    def _item_payload(self, item: Item) -> dict[str, Any]:
-        return {
-            "id": item.id,
-            "type": item.item_type.value,
-            "title": item.title,
-            "description": item.description,
-            "start_at": item.start_at.isoformat() if item.start_at else None,
-            "end_at": item.end_at.isoformat() if item.end_at else None,
-            "due_at": item.due_at.isoformat() if item.due_at else None,
-            "place_text": item.place_text,
-            "status": item.status.value,
-            "version": item.version,
-        }
-
-    def _reminder_payload(self, reminder: Reminder) -> dict[str, Any]:
-        return {
-            "id": reminder.id,
-            "item_id": reminder.item_id,
-            "trigger_type": reminder.trigger_type.value,
-            "trigger_at": reminder.trigger_at.isoformat() if reminder.trigger_at else None,
-            "place_id": reminder.place_id,
-            "priority": reminder.priority.value,
-            "delivery_channel": reminder.delivery_channel.value,
-            "status": reminder.status.value,
-            "snooze_count": reminder.snooze_count,
-            "local_notification_id": reminder.local_notification_id,
-            "local_registration_status": reminder.local_registration_status.value,
-            "failed_reason": reminder.failed_reason,
-            "fallback_status": reminder.fallback_status.value,
-            "fallback_after_seconds": reminder.fallback_after_seconds,
-            "fallback_requested_at": reminder.fallback_requested_at.isoformat()
-            if reminder.fallback_requested_at
-            else None,
-            "version": reminder.version,
-        }

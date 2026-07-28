@@ -10,11 +10,21 @@ import {
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Linking, Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import {
+  Linking,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 
 import {
   applyReminderAction,
   confirmWriteRequest,
+  createAudioVoiceCommand,
   createRepeatRule,
   createWriteRequest,
   createPlace,
@@ -106,10 +116,16 @@ export function HomeScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('today');
   const [items, setItems] = useState<Item[]>(() => initialCache?.items ?? []);
   const [places, setPlaces] = useState<Place[]>(() => initialCache?.places ?? []);
-  const [repeatRules, setRepeatRules] = useState<RepeatRule[]>(() => initialCache?.repeat_rules ?? []);
-  const [outboxMessages, setOutboxMessages] = useState<OutboxMessage[]>(() => initialCache?.outbox_messages ?? []);
+  const [repeatRules, setRepeatRules] = useState<RepeatRule[]>(
+    () => initialCache?.repeat_rules ?? [],
+  );
+  const [outboxMessages, setOutboxMessages] = useState<OutboxMessage[]>(
+    () => initialCache?.outbox_messages ?? [],
+  );
   const [reminders, setReminders] = useState<Reminder[]>(() => initialCache?.reminders ?? []);
-  const [pendingWrites, setPendingWrites] = useState<WriteRequest[]>(() => initialCache?.write_requests ?? []);
+  const [pendingWrites, setPendingWrites] = useState<WriteRequest[]>(
+    () => initialCache?.write_requests ?? [],
+  );
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [itemType, setItemType] = useState<ItemType>('todo');
@@ -123,6 +139,7 @@ export function HomeScreen() {
   });
   const [permissionBusy, setPermissionBusy] = useState<DevicePermission | null>(null);
   const [loading, setLoading] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [voiceOpen, setVoiceOpen] = useState(false);
   const [voiceTranscript, setVoiceTranscript] = useState('到家后提醒我取快递');
   const [voiceResult, setVoiceResult] = useState<VoiceCommandResult | null>(null);
@@ -151,8 +168,8 @@ export function HomeScreen() {
   const [degradeTitle, setDegradeTitle] = useState('到家取快递');
   const [degradePlaceText, setDegradePlaceText] = useState('家');
   const [degradeBusy, setDegradeBusy] = useState(false);
-  const [offlineWriteQueue, setOfflineWriteQueue] = useState<OfflineWriteRequest[]>(
-    () => readOfflineWriteQueue(),
+  const [offlineWriteQueue, setOfflineWriteQueue] = useState<OfflineWriteRequest[]>(() =>
+    readOfflineWriteQueue(),
   );
   const itemsRef = useRef<Item[]>(initialCache?.items ?? []);
   const remindersRef = useRef<Reminder[]>(initialCache?.reminders ?? []);
@@ -357,11 +374,6 @@ export function HomeScreen() {
     };
   }, []);
 
-  const calendarItems = useMemo(
-    () => items.filter((item) => item.type === 'calendar_event'),
-    [items],
-  );
-  const todoItems = useMemo(() => items.filter((item) => item.type === 'todo'), [items]);
   const itemTitleById = useMemo(() => new Map(items.map((item) => [item.id, item.title])), [items]);
   const placeById = useMemo(() => new Map(places.map((place) => [place.id, place])), [places]);
   const processedNotificationIdsRef = useRef(new Set<string>());
@@ -991,6 +1003,26 @@ export function HomeScreen() {
     }
   }
 
+  async function handleParseAudio(audioUri: string) {
+    if (voiceBusy) {
+      return;
+    }
+
+    setVoiceBusy(true);
+    setVoiceResult(null);
+    setSelectedVoiceCandidateId(null);
+    try {
+      const result = await createAudioVoiceCommand(audioUri);
+      setVoiceTranscript(result.voice_command.transcript);
+      setVoiceResult(result);
+      await refresh();
+    } catch {
+      setBanner('录音识别失败');
+    } finally {
+      setVoiceBusy(false);
+    }
+  }
+
   async function handleConfirmVoice() {
     const writeRequestId = voiceResult?.write_request?.id;
     if (!writeRequestId || voiceBusy) {
@@ -1076,34 +1108,20 @@ export function HomeScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.topBar}>
           <View>
-            <Text style={styles.kicker}>Timeflow</Text>
-            <Text style={styles.title}>日程与待办</Text>
+            <Text style={styles.kicker}>{homeDateLabel()}</Text>
+            <Text style={styles.title}>今天</Text>
           </View>
           <View style={styles.toolbar}>
-            <Pressable onPress={handleOpenDocs} style={styles.smallButton}>
-              <Text style={styles.smallButtonText}>Swagger</Text>
-            </Pressable>
             <StatusPill connection={connection} socketState={socketState} />
+            <Pressable onPress={() => setToolsOpen(true)} style={styles.smallButton}>
+              <Text style={styles.smallButtonText}>管理</Text>
+            </Pressable>
           </View>
-        </View>
-
-        <View style={styles.metricsRow}>
-          <Metric label="日历" value={calendarItems.length} />
-          <Metric label="待办" value={todoItems.length} />
-          <Metric label="提醒" value={reminders.length} />
-          <Metric label="地点" value={places.length} />
-          <Metric label="待确认" value={pendingWrites.length} />
         </View>
 
         {banner ? <Text style={styles.banner}>{banner}</Text> : null}
 
-        <PermissionPanel
-          busy={permissionBusy}
-          onRequest={handleRequestDevicePermission}
-          permissions={devicePermissions}
-        />
-
-        <View style={styles.toolbar}>
+        <View style={styles.viewTabs}>
           {(['today', 'week', 'month'] as const).map((mode) => (
             <Pressable
               key={mode}
@@ -1120,6 +1138,360 @@ export function HomeScreen() {
               </Text>
             </Pressable>
           ))}
+        </View>
+
+        <Modal animationType="slide" onRequestClose={() => setToolsOpen(false)} visible={toolsOpen}>
+          <View style={styles.modalRoot}>
+            <StatusBar style="dark" />
+            <ScrollView contentContainerStyle={styles.modalContent}>
+              <View style={styles.toolsHeader}>
+                <View>
+                  <Text style={styles.kicker}>TIMEFLOW</Text>
+                  <Text style={styles.toolsTitle}>管理工具</Text>
+                </View>
+                <Pressable onPress={() => setToolsOpen(false)} style={styles.smallButton}>
+                  <Text style={styles.smallButtonText}>关闭</Text>
+                </Pressable>
+              </View>
+
+              <View style={styles.toolSection}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>设备权限</Text>
+                  <Pressable onPress={handleOpenDocs} style={styles.smallButton}>
+                    <Text style={styles.smallButtonText}>Swagger</Text>
+                  </Pressable>
+                </View>
+                <PermissionPanel
+                  busy={permissionBusy}
+                  onRequest={handleRequestDevicePermission}
+                  permissions={devicePermissions}
+                />
+              </View>
+
+              <View style={styles.placeSection}>
+                <View style={styles.quickAddHeader}>
+                  <Text style={styles.sectionTitle}>地点库</Text>
+                  <View style={styles.typeToggle}>
+                    {(['home', 'work', 'custom', 'temporary_parking'] as const).map((type) => (
+                      <Pressable
+                        key={type}
+                        onPress={() => setPlaceType(type)}
+                        style={[styles.typeButton, placeType === type && styles.typeButtonActive]}
+                      >
+                        <Text
+                          style={[
+                            styles.typeButtonText,
+                            placeType === type && styles.typeButtonTextActive,
+                          ]}
+                        >
+                          {placeTypeLabel(type)}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </View>
+                </View>
+                <TextInput
+                  value={placeLabel}
+                  onChangeText={setPlaceLabel}
+                  placeholder="地点名称"
+                  placeholderTextColor={colors.muted}
+                  style={styles.input}
+                />
+                <TextInput
+                  value={placeRadius}
+                  onChangeText={setPlaceRadius}
+                  placeholder="触发半径，默认 100"
+                  placeholderTextColor={colors.muted}
+                  style={styles.input}
+                  keyboardType="number-pad"
+                />
+                <TextInput
+                  value={placeDescription}
+                  onChangeText={setPlaceDescription}
+                  placeholder="文字描述，可选"
+                  placeholderTextColor={colors.muted}
+                  style={styles.input}
+                />
+                <Pressable
+                  onPress={handleCreatePlace}
+                  style={[styles.primaryButton, placeBusy && styles.disabledButton]}
+                >
+                  <Text style={styles.primaryButtonText}>{placeBusy ? '保存中' : '保存地点'}</Text>
+                </Pressable>
+                <Pressable
+                  onPress={handleSaveCurrentPlace}
+                  style={[styles.secondaryButton, saveCurrentPlaceBusy && styles.disabledButton]}
+                >
+                  <Text style={styles.secondaryButtonText}>
+                    {saveCurrentPlaceBusy ? '定位中' : '保存当前位置'}
+                  </Text>
+                </Pressable>
+
+                {places.length > 0 ? (
+                  <View style={styles.placeList}>
+                    {places.map((place) => (
+                      <View key={place.id} style={styles.placeRow}>
+                        <View style={styles.placeBody}>
+                          <View style={styles.itemHeader}>
+                            <Text style={styles.itemTitle}>{place.label}</Text>
+                            <Text style={styles.itemKind}>{placeTypeLabel(place.place_type)}</Text>
+                          </View>
+                          <Text style={styles.placeMeta}>
+                            半径 {place.radius_meters}m
+                            {place.description ? ` · ${place.description}` : ''}
+                          </Text>
+                        </View>
+                        <View style={styles.rowActions}>
+                          <Pressable
+                            onPress={() => handleDeletePlace(place)}
+                            style={styles.smallButtonDanger}
+                          >
+                            <Text style={styles.smallButtonDangerText}>
+                              {deletingPlaceId === place.id ? '删除中' : '删除'}
+                            </Text>
+                          </Pressable>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+
+              <View style={styles.repeatSection}>
+                <View style={styles.quickAddHeader}>
+                  <Text style={styles.sectionTitle}>重复规则</Text>
+                  <Text style={styles.subtle}>{repeatRules.length} 项</Text>
+                </View>
+                <View style={styles.placePicker}>
+                  {(['daily', 'weekdays', 'custom_weekdays'] as const).map((pattern) => {
+                    const selected = repeatPattern === pattern;
+                    return (
+                      <Pressable
+                        key={pattern}
+                        onPress={() => setRepeatPattern(pattern)}
+                        style={[styles.placeChip, selected && styles.placeChipActive]}
+                      >
+                        <Text
+                          style={[styles.placeChipText, selected && styles.placeChipTextActive]}
+                        >
+                          {repeatPatternLabel(pattern)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                {repeatPattern === 'custom_weekdays' ? (
+                  <View style={styles.placePicker}>
+                    {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
+                      const selected = repeatWeekdays.includes(weekday);
+                      return (
+                        <Pressable
+                          key={weekday}
+                          onPress={() => handleToggleRepeatWeekday(weekday)}
+                          style={[styles.placeChip, selected && styles.placeChipActive]}
+                        >
+                          <Text
+                            style={[styles.placeChipText, selected && styles.placeChipTextActive]}
+                          >
+                            {weekdayLabel(weekday)}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : null}
+                <TextInput
+                  value={repeatTimeOfDay}
+                  onChangeText={setRepeatTimeOfDay}
+                  placeholder="触发时间，例如 09:00"
+                  placeholderTextColor={colors.muted}
+                  style={styles.input}
+                />
+                <View style={styles.placePicker}>
+                  {(['active', 'paused', 'stopped'] as const).map((status) => {
+                    const selected = repeatSeriesStatus === status;
+                    return (
+                      <Pressable
+                        key={status}
+                        onPress={() => setRepeatSeriesStatus(status)}
+                        style={[styles.placeChip, selected && styles.placeChipActive]}
+                      >
+                        <Text
+                          style={[styles.placeChipText, selected && styles.placeChipTextActive]}
+                        >
+                          {seriesStatusLabel(status)}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+                <Pressable
+                  onPress={handleCreateRepeatRule}
+                  style={[styles.primaryButton, repeatBusy && styles.disabledButton]}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {repeatBusy ? '保存中' : '保存重复规则'}
+                  </Text>
+                </Pressable>
+
+                {repeatRules.length > 0 ? (
+                  <View style={styles.placeList}>
+                    {repeatRules.map((repeatRule) => (
+                      <View key={repeatRule.id} style={styles.placeRow}>
+                        <View style={styles.placeBody}>
+                          <View style={styles.itemHeader}>
+                            <Text style={styles.itemTitle}>
+                              {repeatPatternLabel(repeatRule.pattern)}
+                            </Text>
+                            <Text style={styles.itemKind}>
+                              {seriesStatusLabel(repeatRule.series_status)}
+                            </Text>
+                          </View>
+                          <Text style={styles.placeMeta}>{repeatRuleSummary(repeatRule)}</Text>
+                        </View>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+
+              <View style={styles.degradeSection}>
+                <View style={styles.quickAddHeader}>
+                  <Text style={styles.sectionTitle}>权限降级</Text>
+                  <Text style={styles.subtle}>定位</Text>
+                </View>
+                <TextInput
+                  value={degradeTitle}
+                  onChangeText={setDegradeTitle}
+                  placeholder="事项标题"
+                  placeholderTextColor={colors.muted}
+                  style={styles.input}
+                />
+                <TextInput
+                  value={degradePlaceText}
+                  onChangeText={setDegradePlaceText}
+                  placeholder="文字地点"
+                  placeholderTextColor={colors.muted}
+                  style={styles.input}
+                />
+                <Pressable
+                  onPress={handleLocationDegrade}
+                  style={[styles.primaryButton, degradeBusy && styles.disabledButton]}
+                >
+                  <Text style={styles.primaryButtonText}>
+                    {degradeBusy ? '处理中' : '降级为待办'}
+                  </Text>
+                </Pressable>
+              </View>
+
+              <View style={styles.reminderOverviewSection}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>提醒总览</Text>
+                  <Text style={styles.subtle}>{reminders.length} 条</Text>
+                </View>
+                <Pressable
+                  onPress={handleCheckPlaceReminders}
+                  style={[styles.secondaryButton, checkingPlaceReminders && styles.disabledButton]}
+                >
+                  <Text style={styles.secondaryButtonText}>
+                    {checkingPlaceReminders ? '检查中' : '检查地点提醒'}
+                  </Text>
+                </Pressable>
+                {reminders.length > 0 ? (
+                  <View style={styles.placeList}>
+                    {reminders.map((reminder) => (
+                      <View key={reminder.id} style={styles.queryRow}>
+                        <View style={styles.itemHeader}>
+                          <Text style={styles.itemTitle}>
+                            {itemTitleById.get(reminder.item_id) ?? reminder.item_id.slice(0, 8)}
+                          </Text>
+                          <Text style={styles.itemKind}>{statusLabel(reminder.status)}</Text>
+                        </View>
+                        <Text style={styles.placeMeta}>{reminderOverviewMeta(reminder)}</Text>
+                        <ReminderControl
+                          actingReminderId={actingReminderId}
+                          onAction={handleReminderAction}
+                          reminder={reminder}
+                        />
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.emptyText}>还没有提醒。</Text>
+                )}
+              </View>
+
+              <View style={styles.outboxSection}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>同步事件</Text>
+                  <Text style={styles.subtle}>{outboxMessages.length} 条</Text>
+                </View>
+                {outboxMessages.length > 0 ? (
+                  <View style={styles.placeList}>
+                    {outboxMessages.slice(-5).map((message) => (
+                      <View key={message.id} style={styles.queryRow}>
+                        <View style={styles.itemHeader}>
+                          <Text style={styles.itemTitle}>{outboxMessageSummary(message)}</Text>
+                          <Text style={styles.itemKind}>{message.status}</Text>
+                        </View>
+                        <Text style={styles.placeMeta}>{outboxMessageMeta(message)}</Text>
+                      </View>
+                    ))}
+                  </View>
+                ) : (
+                  <Text style={styles.emptyText}>还没有同步事件。</Text>
+                )}
+              </View>
+            </ScrollView>
+          </View>
+        </Modal>
+
+        {pendingWrites.length > 0 || offlineWriteQueue.length > 0 ? (
+          <View style={styles.pendingSection}>
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>待确认</Text>
+              <Text style={styles.subtle}>
+                {pendingWrites.length + offlineWriteQueue.length} 项
+              </Text>
+            </View>
+            {offlineWriteQueue.length > 0 ? (
+              <Text style={styles.subtle}>
+                离线队列 {offlineWriteQueue.length} 项，恢复连接后自动补写
+              </Text>
+            ) : null}
+            {pendingWrites.map((writeRequest) => (
+              <PendingWriteRow
+                key={writeRequest.id}
+                onConfirm={handleConfirmPending}
+                onReject={handleRejectPending}
+                writeRequest={writeRequest}
+              />
+            ))}
+          </View>
+        ) : null}
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>{modeLabel(viewMode)}事项</Text>
+          <Text style={styles.subtle}>{visibleItems.length} 项</Text>
+        </View>
+
+        <View style={styles.list}>
+          {visibleItems.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>暂无事项</Text>
+              <Text style={styles.emptyText}>用快速新增或底部语音按钮创建第一条事项。</Text>
+            </View>
+          ) : (
+            visibleItems.map((item) => (
+              <ItemRow
+                key={item.id}
+                item={item}
+                onEdit={handleOpenEdit}
+                onPrepareOperation={handlePrepareItemOperation}
+                onRemind={handleOpenReminder}
+              />
+            ))
+          )}
         </View>
 
         <View style={styles.quickAdd}>
@@ -1165,319 +1537,6 @@ export function HomeScreen() {
             <Text style={styles.primaryButtonText}>{loading ? '生成中' : '生成确认'}</Text>
           </Pressable>
         </View>
-
-        <View style={styles.placeSection}>
-          <View style={styles.quickAddHeader}>
-            <Text style={styles.sectionTitle}>地点库</Text>
-            <View style={styles.typeToggle}>
-              {(['home', 'work', 'custom', 'temporary_parking'] as const).map((type) => (
-                <Pressable
-                  key={type}
-                  onPress={() => setPlaceType(type)}
-                  style={[styles.typeButton, placeType === type && styles.typeButtonActive]}
-                >
-                  <Text
-                    style={[
-                      styles.typeButtonText,
-                      placeType === type && styles.typeButtonTextActive,
-                    ]}
-                  >
-                    {placeTypeLabel(type)}
-                  </Text>
-                </Pressable>
-              ))}
-            </View>
-          </View>
-          <TextInput
-            value={placeLabel}
-            onChangeText={setPlaceLabel}
-            placeholder="地点名称"
-            placeholderTextColor={colors.muted}
-            style={styles.input}
-          />
-          <TextInput
-            value={placeRadius}
-            onChangeText={setPlaceRadius}
-            placeholder="触发半径，默认 100"
-            placeholderTextColor={colors.muted}
-            style={styles.input}
-            keyboardType="number-pad"
-          />
-          <TextInput
-            value={placeDescription}
-            onChangeText={setPlaceDescription}
-            placeholder="文字描述，可选"
-            placeholderTextColor={colors.muted}
-            style={styles.input}
-          />
-          <Pressable
-            onPress={handleCreatePlace}
-            style={[styles.primaryButton, placeBusy && styles.disabledButton]}
-          >
-            <Text style={styles.primaryButtonText}>{placeBusy ? '保存中' : '保存地点'}</Text>
-          </Pressable>
-          <Pressable
-            onPress={handleSaveCurrentPlace}
-            style={[styles.secondaryButton, saveCurrentPlaceBusy && styles.disabledButton]}
-          >
-            <Text style={styles.secondaryButtonText}>
-              {saveCurrentPlaceBusy ? '定位中' : '保存当前位置'}
-            </Text>
-          </Pressable>
-
-          {places.length > 0 ? (
-            <View style={styles.placeList}>
-              {places.map((place) => (
-                <View key={place.id} style={styles.placeRow}>
-                  <View style={styles.placeBody}>
-                    <View style={styles.itemHeader}>
-                      <Text style={styles.itemTitle}>{place.label}</Text>
-                      <Text style={styles.itemKind}>{placeTypeLabel(place.place_type)}</Text>
-                    </View>
-                    <Text style={styles.placeMeta}>
-                      半径 {place.radius_meters}m
-                      {place.description ? ` · ${place.description}` : ''}
-                    </Text>
-                  </View>
-                  <View style={styles.rowActions}>
-                    <Pressable
-                      onPress={() => handleDeletePlace(place)}
-                      style={styles.smallButtonDanger}
-                    >
-                      <Text style={styles.smallButtonDangerText}>
-                        {deletingPlaceId === place.id ? '删除中' : '删除'}
-                      </Text>
-                    </Pressable>
-                  </View>
-                </View>
-              ))}
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.repeatSection}>
-          <View style={styles.quickAddHeader}>
-            <Text style={styles.sectionTitle}>重复规则</Text>
-            <Text style={styles.subtle}>{repeatRules.length} 项</Text>
-          </View>
-          <View style={styles.placePicker}>
-            {(['daily', 'weekdays', 'custom_weekdays'] as const).map((pattern) => {
-              const selected = repeatPattern === pattern;
-              return (
-                <Pressable
-                  key={pattern}
-                  onPress={() => setRepeatPattern(pattern)}
-                  style={[styles.placeChip, selected && styles.placeChipActive]}
-                >
-                  <Text style={[styles.placeChipText, selected && styles.placeChipTextActive]}>
-                    {repeatPatternLabel(pattern)}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          {repeatPattern === 'custom_weekdays' ? (
-            <View style={styles.placePicker}>
-              {[1, 2, 3, 4, 5, 6, 7].map((weekday) => {
-                const selected = repeatWeekdays.includes(weekday);
-                return (
-                  <Pressable
-                    key={weekday}
-                    onPress={() => handleToggleRepeatWeekday(weekday)}
-                    style={[styles.placeChip, selected && styles.placeChipActive]}
-                  >
-                    <Text style={[styles.placeChipText, selected && styles.placeChipTextActive]}>
-                      {weekdayLabel(weekday)}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-          ) : null}
-          <TextInput
-            value={repeatTimeOfDay}
-            onChangeText={setRepeatTimeOfDay}
-            placeholder="触发时间，例如 09:00"
-            placeholderTextColor={colors.muted}
-            style={styles.input}
-          />
-          <View style={styles.placePicker}>
-            {(['active', 'paused', 'stopped'] as const).map((status) => {
-              const selected = repeatSeriesStatus === status;
-              return (
-                <Pressable
-                  key={status}
-                  onPress={() => setRepeatSeriesStatus(status)}
-                  style={[styles.placeChip, selected && styles.placeChipActive]}
-                >
-                  <Text style={[styles.placeChipText, selected && styles.placeChipTextActive]}>
-                    {seriesStatusLabel(status)}
-                  </Text>
-                </Pressable>
-              );
-            })}
-          </View>
-          <Pressable
-            onPress={handleCreateRepeatRule}
-            style={[styles.primaryButton, repeatBusy && styles.disabledButton]}
-          >
-            <Text style={styles.primaryButtonText}>{repeatBusy ? '保存中' : '保存重复规则'}</Text>
-          </Pressable>
-
-          {repeatRules.length > 0 ? (
-            <View style={styles.placeList}>
-              {repeatRules.map((repeatRule) => (
-                <View key={repeatRule.id} style={styles.placeRow}>
-                  <View style={styles.placeBody}>
-                    <View style={styles.itemHeader}>
-                      <Text style={styles.itemTitle}>{repeatPatternLabel(repeatRule.pattern)}</Text>
-                      <Text style={styles.itemKind}>
-                        {seriesStatusLabel(repeatRule.series_status)}
-                      </Text>
-                    </View>
-                    <Text style={styles.placeMeta}>{repeatRuleSummary(repeatRule)}</Text>
-                  </View>
-                </View>
-              ))}
-            </View>
-          ) : null}
-        </View>
-
-        <View style={styles.degradeSection}>
-          <View style={styles.quickAddHeader}>
-            <Text style={styles.sectionTitle}>权限降级</Text>
-            <Text style={styles.subtle}>定位</Text>
-          </View>
-          <TextInput
-            value={degradeTitle}
-            onChangeText={setDegradeTitle}
-            placeholder="事项标题"
-            placeholderTextColor={colors.muted}
-            style={styles.input}
-          />
-          <TextInput
-            value={degradePlaceText}
-            onChangeText={setDegradePlaceText}
-            placeholder="文字地点"
-            placeholderTextColor={colors.muted}
-            style={styles.input}
-          />
-          <Pressable
-            onPress={handleLocationDegrade}
-            style={[styles.primaryButton, degradeBusy && styles.disabledButton]}
-          >
-            <Text style={styles.primaryButtonText}>{degradeBusy ? '处理中' : '降级为待办'}</Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.reminderOverviewSection}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>提醒总览</Text>
-            <Text style={styles.subtle}>{reminders.length} 条</Text>
-          </View>
-          <Pressable
-            onPress={handleCheckPlaceReminders}
-            style={[styles.secondaryButton, checkingPlaceReminders && styles.disabledButton]}
-          >
-            <Text style={styles.secondaryButtonText}>
-              {checkingPlaceReminders ? '检查中' : '检查地点提醒'}
-            </Text>
-          </Pressable>
-          {reminders.length > 0 ? (
-            <View style={styles.placeList}>
-              {reminders.map((reminder) => (
-                <View key={reminder.id} style={styles.queryRow}>
-                  <View style={styles.itemHeader}>
-                    <Text style={styles.itemTitle}>
-                      {itemTitleById.get(reminder.item_id) ?? reminder.item_id.slice(0, 8)}
-                    </Text>
-                    <Text style={styles.itemKind}>{statusLabel(reminder.status)}</Text>
-                  </View>
-                  <Text style={styles.placeMeta}>{reminderOverviewMeta(reminder)}</Text>
-                  <ReminderControl
-                    actingReminderId={actingReminderId}
-                    onAction={handleReminderAction}
-                    reminder={reminder}
-                  />
-                </View>
-              ))}
-            </View>
-          ) : (
-            <Text style={styles.emptyText}>还没有提醒。</Text>
-          )}
-        </View>
-
-        <View style={styles.outboxSection}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>同步事件</Text>
-            <Text style={styles.subtle}>{outboxMessages.length} 条</Text>
-          </View>
-          {outboxMessages.length > 0 ? (
-            <View style={styles.placeList}>
-              {outboxMessages.slice(-5).map((message) => (
-                <View key={message.id} style={styles.queryRow}>
-                  <View style={styles.itemHeader}>
-                    <Text style={styles.itemTitle}>{outboxMessageSummary(message)}</Text>
-                    <Text style={styles.itemKind}>{message.status}</Text>
-                  </View>
-                  <Text style={styles.placeMeta}>{outboxMessageMeta(message)}</Text>
-                </View>
-              ))}
-            </View>
-          ) : (
-            <Text style={styles.emptyText}>还没有同步事件。</Text>
-          )}
-        </View>
-
-        {pendingWrites.length > 0 || offlineWriteQueue.length > 0 ? (
-          <View style={styles.pendingSection}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionTitle}>待确认</Text>
-              <Text style={styles.subtle}>
-                {pendingWrites.length + offlineWriteQueue.length} 项
-              </Text>
-            </View>
-            {offlineWriteQueue.length > 0 ? (
-              <Text style={styles.subtle}>
-                离线队列 {offlineWriteQueue.length} 项，恢复连接后自动补写
-              </Text>
-            ) : null}
-            {pendingWrites.map((writeRequest) => (
-              <PendingWriteRow
-                key={writeRequest.id}
-                onConfirm={handleConfirmPending}
-                onReject={handleRejectPending}
-                writeRequest={writeRequest}
-              />
-            ))}
-          </View>
-        ) : null}
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>{modeLabel(viewMode)}事项</Text>
-          <Text style={styles.subtle}>{visibleItems.length} 项</Text>
-        </View>
-
-        <View style={styles.list}>
-          {visibleItems.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>暂无事项</Text>
-              <Text style={styles.emptyText}>用快速新增或底部语音按钮创建第一条事项。</Text>
-            </View>
-          ) : (
-            visibleItems.map((item) => (
-              <ItemRow
-                key={item.id}
-                item={item}
-                actingReminderId={actingReminderId}
-                onEdit={handleOpenEdit}
-                onPrepareOperation={handlePrepareItemOperation}
-                onReminderAction={handleReminderAction}
-                onRemind={handleOpenReminder}
-              />
-            ))
-          )}
-        </View>
       </ScrollView>
 
       <Pressable onPress={() => setVoiceOpen(true)} style={styles.voiceDock}>
@@ -1489,6 +1548,7 @@ export function HomeScreen() {
         onClose={() => setVoiceOpen(false)}
         onConfirm={handleConfirmVoice}
         onParse={handleParseVoice}
+        onParseAudio={handleParseAudio}
         onReject={handleRejectVoice}
         onChooseCandidate={handleChooseVoiceCandidate}
         result={voiceResult}
@@ -1546,9 +1606,11 @@ function StatusPill({
   );
 }
 
-function parseRealtimeMessage(
-  rawMessage: string,
-): { event_type?: string; payload?: { events?: unknown; next_cursor?: unknown }; version?: unknown } | null {
+function parseRealtimeMessage(rawMessage: string): {
+  event_type?: string;
+  payload?: { events?: unknown; next_cursor?: unknown };
+  version?: unknown;
+} | null {
   try {
     const parsed = JSON.parse(rawMessage) as unknown;
     if (parsed && typeof parsed === 'object') {
@@ -1592,15 +1654,6 @@ function mergeLwwById<T extends { id: string }>(
   return [...merged.values()];
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <View style={styles.metric}>
-      <Text style={styles.metricValue}>{value}</Text>
-      <Text style={styles.metricLabel}>{label}</Text>
-    </View>
-  );
-}
-
 function PermissionPanel({
   busy,
   onRequest,
@@ -1639,17 +1692,13 @@ function PermissionPanel({
 
 function ItemRow({
   item,
-  actingReminderId,
   onEdit,
   onPrepareOperation,
-  onReminderAction,
   onRemind,
 }: {
   item: Item;
-  actingReminderId: string | null;
   onEdit: (item: Item) => void;
   onPrepareOperation: (item: Item, operation: ManualOperation) => void;
-  onReminderAction: (reminder: Reminder, action: ReminderAction) => void;
   onRemind: (item: Item) => void;
 }) {
   const completed = item.status === 'completed';
@@ -1658,7 +1707,7 @@ function ItemRow({
       <View
         style={[styles.itemStripe, item.type === 'todo' ? styles.todoStripe : styles.eventStripe]}
       />
-      <View style={styles.itemBody}>
+      <View style={styles.itemContent}>
         <View style={styles.itemHeader}>
           <Text style={[styles.itemTitle, completed && styles.completedText]}>{item.title}</Text>
           <Text style={styles.itemKind}>{item.type === 'todo' ? '待办' : '日历'}</Text>
@@ -1667,12 +1716,9 @@ function ItemRow({
         {item.reminders.length > 0 ? (
           <View style={styles.badges}>
             {item.reminders.slice(0, 2).map((reminder) => (
-              <ReminderControl
-                key={reminder.id}
-                actingReminderId={actingReminderId}
-                onAction={onReminderAction}
-                reminder={reminder}
-              />
+              <View key={reminder.id} style={styles.badge}>
+                <Text style={styles.badgeText}>{reminderLabel(reminder)}</Text>
+              </View>
             ))}
             {item.reminders.length > 2 ? (
               <View style={styles.badge}>
@@ -1681,30 +1727,30 @@ function ItemRow({
             ) : null}
           </View>
         ) : null}
-      </View>
-      <View style={styles.rowActions}>
-        <Pressable onPress={() => onEdit(item)} style={styles.smallButton}>
-          <Text style={styles.smallButtonText}>编辑</Text>
-        </Pressable>
-        <Pressable onPress={() => onRemind(item)} style={styles.smallButton}>
-          <Text style={styles.smallButtonText}>提醒</Text>
-        </Pressable>
-        {item.type === 'todo' ? (
-          <Pressable
-            onPress={() =>
-              onPrepareOperation(item, completed ? 'cancel_complete_item' : 'complete_item')
-            }
-            style={styles.smallButton}
-          >
-            <Text style={styles.smallButtonText}>{completed ? '恢复' : '完成'}</Text>
+        <View style={styles.itemActions}>
+          <Pressable onPress={() => onEdit(item)} style={styles.smallButton}>
+            <Text style={styles.smallButtonText}>编辑</Text>
           </Pressable>
-        ) : null}
-        <Pressable
-          onPress={() => onPrepareOperation(item, 'delete_item')}
-          style={styles.smallButtonDanger}
-        >
-          <Text style={styles.smallButtonDangerText}>删除</Text>
-        </Pressable>
+          <Pressable onPress={() => onRemind(item)} style={styles.smallButton}>
+            <Text style={styles.smallButtonText}>提醒</Text>
+          </Pressable>
+          {item.type === 'todo' ? (
+            <Pressable
+              onPress={() =>
+                onPrepareOperation(item, completed ? 'cancel_complete_item' : 'complete_item')
+              }
+              style={styles.smallButton}
+            >
+              <Text style={styles.smallButtonText}>{completed ? '恢复' : '完成'}</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            onPress={() => onPrepareOperation(item, 'delete_item')}
+            style={styles.smallButtonDanger}
+          >
+            <Text style={styles.smallButtonDangerText}>删除</Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -1815,6 +1861,7 @@ function VoiceSheet({
   onClose,
   onConfirm,
   onParse,
+  onParseAudio,
   onReject,
   onChooseCandidate,
   onTranscriptChange,
@@ -1827,6 +1874,7 @@ function VoiceSheet({
   onClose: () => void;
   onConfirm: () => void;
   onParse: () => void;
+  onParseAudio: (audioUri: string) => void;
   onReject: () => void;
   onChooseCandidate: (candidate: Item) => void;
   onTranscriptChange: (value: string) => void;
@@ -1923,10 +1971,18 @@ function VoiceSheet({
             <Text style={styles.previewMeta}>
               {recorderState.isRecording
                 ? `录音中 ${Math.ceil(recorderState.durationMillis / 1000)} 秒`
-                : '可先录音，再手动整理转写'}
+                : '停止录音后可直接识别'}
             </Text>
             {recordingMessage ? <Text style={styles.noticeText}>{recordingMessage}</Text> : null}
-            {recordedUri ? <Text style={styles.previewMeta}>录音文件 {recordedUri}</Text> : null}
+            {recordedUri ? (
+              <Pressable
+                disabled={busy || recordingBusy}
+                onPress={() => onParseAudio(recordedUri)}
+                style={[styles.primaryButton, (busy || recordingBusy) && styles.disabledButton]}
+              >
+                <Text style={styles.primaryButtonText}>{busy ? '识别中' : '识别录音'}</Text>
+              </Pressable>
+            ) : null}
           </View>
 
           {result?.clarification ? (
@@ -2401,6 +2457,14 @@ function formatDate(value: string) {
   });
 }
 
+function homeDateLabel() {
+  return new Date().toLocaleDateString('zh-CN', {
+    day: 'numeric',
+    month: 'long',
+    weekday: 'long',
+  });
+}
+
 function modeLabel(mode: ViewMode) {
   return mode === 'today' ? '今日' : mode === 'week' ? '本周' : '本月';
 }
@@ -2827,10 +2891,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   content: {
-    gap: spacing.lg,
-    padding: spacing.lg,
-    paddingBottom: 116,
-    paddingTop: 64,
+    gap: 20,
+    paddingBottom: 112,
+    paddingHorizontal: 20,
+    paddingTop: 52,
   },
   disabledButton: {
     opacity: 0.65,
@@ -2873,6 +2937,18 @@ const styles = StyleSheet.create({
     gap: 2,
     minWidth: 0,
   },
+  itemContent: {
+    flex: 1,
+    gap: spacing.xs,
+    minWidth: 0,
+    padding: spacing.md,
+  },
+  itemActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
   itemHeader: {
     alignItems: 'center',
     flexDirection: 'row',
@@ -2894,7 +2970,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     flexDirection: 'row',
-    minHeight: 82,
+    minHeight: 108,
     overflow: 'hidden',
   },
   itemStripe: {
@@ -2912,29 +2988,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   list: {
-    gap: spacing.md,
-  },
-  metric: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: 8,
-    borderWidth: 1,
-    flex: 1,
-    padding: spacing.md,
-  },
-  metricLabel: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: 2,
-  },
-  metricValue: {
-    color: colors.text,
-    fontSize: 22,
-    fontWeight: '900',
-  },
-  metricsRow: {
-    flexDirection: 'row',
     gap: spacing.sm,
   },
   modalActions: {
@@ -2945,9 +2998,9 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     gap: spacing.lg,
-    padding: spacing.lg,
+    paddingHorizontal: 20,
     paddingBottom: spacing.xl,
-    paddingTop: 64,
+    paddingTop: 52,
   },
   modalRoot: {
     backgroundColor: colors.background,
@@ -3265,8 +3318,9 @@ const styles = StyleSheet.create({
   statusPill: {
     borderRadius: 999,
     borderWidth: 1,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
+    justifyContent: 'center',
+    minHeight: 32,
+    paddingHorizontal: spacing.sm,
   },
   statusPillMuted: {
     backgroundColor: colors.surface,
@@ -3277,8 +3331,8 @@ const styles = StyleSheet.create({
     borderColor: '#B8E3C8',
   },
   statusText: {
-    fontSize: 13,
-    fontWeight: '900',
+    fontSize: 12,
+    fontWeight: '800',
   },
   statusTextMuted: {
     color: colors.muted,
@@ -3305,15 +3359,29 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontSize: 30,
+    fontSize: 28,
     fontWeight: '900',
   },
   todoStripe: {
     backgroundColor: colors.accent,
   },
   toolbar: {
+    alignItems: 'center',
     flexDirection: 'row',
     gap: spacing.sm,
+  },
+  toolSection: {
+    gap: spacing.md,
+  },
+  toolsHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  toolsTitle: {
+    color: colors.text,
+    fontSize: 26,
+    fontWeight: '900',
   },
   topBar: {
     alignItems: 'center',
@@ -3343,17 +3411,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: spacing.sm,
   },
+  viewTabs: {
+    backgroundColor: '#E9ECF2',
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4,
+  },
   voiceDock: {
     alignItems: 'center',
     backgroundColor: colors.accent,
-    borderRadius: 34,
-    bottom: 28,
-    height: 68,
+    borderRadius: 30,
+    bottom: 24,
+    elevation: 8,
+    height: 60,
     justifyContent: 'center',
     left: '50%',
-    marginLeft: -34,
+    marginLeft: -30,
     position: 'absolute',
-    width: 68,
+    shadowColor: '#17212B',
+    shadowOffset: { height: 4, width: 0 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    width: 60,
   },
   voiceDockText: {
     color: colors.surface,

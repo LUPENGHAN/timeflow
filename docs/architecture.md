@@ -46,7 +46,7 @@ Infrastructure Adapters
 | Domain Core | 命令模型、确认门禁、事件、幂等、时间、错误码 | 具体产品逻辑 |
 | Capability Packs | calendar、todo、reminder、long task split、replan、smart reminder 等 | 改写核心协议 |
 | Context & Policy Layer | 时间、地点、天气、噪声、设备状态、用户偏好、触发条件、投递策略 | 业务持久化写入；P0 不激活复杂环境判断 |
-| Infrastructure Adapters | 数据库、Outbox、通知、ASR、LLM、外部环境服务、WS 连接 | 业务决策 |
+| Infrastructure Adapters | 数据库、通知、ASR、LLM、外部环境服务、WS 连接 | 业务决策 |
 
 ## 3. 核心设计原则
 
@@ -57,7 +57,6 @@ Infrastructure Adapters
 - `Command`
 - `WriteRequest`
 - `DomainEvent`
-- `EventCursor`
 - `IdempotencyKey`
 - `Identity`（user / device / session）
 - `Clock` 和 `Timezone`
@@ -103,12 +102,14 @@ P0 只激活：
 
 ### 3.5 事件驱动同步
 
-业务事实变化后统一产出领域事件，再由投影器分发到：
+业务事实变化后统一产出领域事件，再分发到：
 
 - WebSocket 实时推送
 - 本地通知
 - 查询缓存刷新
 - 审计记录
+
+P0 是单进程同步直达：写入产生 `DomainEvent` 后，API 层直接同步调用 WS 广播，不经过持久化的 Outbox/投影器。可靠投递（离线补发、多实例广播、失败重试）需要 Outbox 时再引入，不要在没有消费者的情况下先建表占位。
 
 ## 4. 领域与能力模型
 
@@ -121,7 +122,6 @@ Stable Core 只定义通用骨架：
 | `Command` | 统一命令模型，承载 action / entity / payload |
 | `WriteRequest` | 所有写入的确认门禁 |
 | `DomainEvent` | 领域事实变化的统一表达 |
-| `EventCursor` | WS 和补拉用的事件游标 |
 | `Identity` | user_id / device_id / session_id |
 | `Time` | 时区、当前时间、时间解析 |
 | `ErrorCode` | 稳定错误码 |
@@ -195,6 +195,14 @@ P0 可以创建但不激活：
 这些对象不属于 AI capability，它们属于 reminder / smart_reminder 内部的执行和判定层。
 
 P0 实现时可以只落一个 `ReminderDecisionService`，内部调用最小的时间和地点触发、以及本地通知策略。云端兜底策略先保留状态和接口，真实短信、邮件、电话供应商后续接入。后续再把它逐步拆成 Trigger、Condition、ContextProvider、Policy 和 DeliveryChannel。
+
+#### 4.3.1 当前接入状态（避免和实现产生偏差）
+
+提醒的触发状态机目前完全由客户端显式上报的 action 驱动（`POST /reminders/{id}/actions`），服务端还没有到期扫描或推送机制。因此：
+
+- `CooldownPolicy` 已真正接入 `ReminderCapability.apply_action`，用于限制 P0 只允许一次 snooze。
+- `CloudFallbackPolicy` 已真正接入，用于本地不可达时记录云端兜底请求。
+- `TimeTrigger`、`EnterPlaceTrigger`、`LeavePlaceTrigger`、`TimeContextProvider`、`PlaceContextProvider`、`LocalNotificationPolicy` 以及其余 Condition/Policy 仍然只是接口骨架，没有被运行时调用。把它们接入需要先实现服务端到期扫描/推送机制，这是独立于本次重构的后续功能，不要在没有该机制的情况下强行接入。
 
 ## 5. 命令与写入流程
 
@@ -427,6 +435,8 @@ AI 层只做两件事：
 - `CommandParser`
 - `CandidateResolver`
 
+代码实现位于 `timeapp/ai`（`ai/asr` 是 ASR 客户端，`ai/parser` 是 `LLMCommandParser`/`MockCommandParser`），不要放进未分层的顶层包。
+
 ### 7.2 AI 与 capability 的关系
 
 AI 不决定 capability 的存在与否，只负责生成对应能力的候选命令。
@@ -523,6 +533,17 @@ Capability Package
 
 P0 实现时可以用普通模块和显式路由表表达，不要求自动发现或动态注册。
 
+#### 8.1.1 `voice_command` 和 `realtime` 不是同一种 capability
+
+`calendar`/`todo`/`reminder`/`long_task_split`/`replan`/`smart_reminder` 都是"通过 `WriteRequest` 确认门禁写入业务事实"的能力，符合 8.1 的最小清单。
+
+`voice_command` 和 `realtime` 不是这种能力：
+
+- `voice_command` 是语音进入命令管道的入口，真实实现是 `ai/asr`（转录）+ `ai/parser`（解析）+ `application/service.py` 的 `submit_voice_command`（编排反问、候选、写入请求）。它不持有自己的 `command_handlers`，而是产出交给其他 capability 处理的 `Command`。
+- `realtime` 是 WS 连接和事件广播的传输边界，真实实现是 `api/realtime.py` 的 `RealtimeConnectionManager`。它不持有业务事件，只订阅其他 capability 产出的 `DomainEvent` 并广播。
+
+`capabilities/voice_command/`、`capabilities/realtime/` 保留为空包只是文档对齐的命名占位，不需要把 `application`/`api` 里的实现搬进去——这样搬只是把代码挪个地方，不会让架构更清楚。15.2 节里把它们标记为 "active" 指的是链路已激活，不代表它们应该长成 calendar/todo/reminder 那种带 `command_handlers` 的能力包。
+
 ### 8.2 Calendar Capability
 
 负责：
@@ -551,6 +572,7 @@ P0 实现时可以用普通模块和显式路由表表达，不要求自动发�
 - 提醒动作处理
 - 所有提醒绑定 `item_id`
 - 独立地点提醒通过系统创建轻量 Todo 后绑定提醒
+- `Place` 和 `RepeatRule` 目前只服务于提醒触发，没有独立 capability；它们的创建、更新、校验也由 reminder capability 持有
 
 ### 8.5 Long Task Split Capability
 
@@ -602,9 +624,9 @@ P0 实现时可以用普通模块和显式路由表表达，不要求自动发�
 | --- | --- |
 | `voice_commands` | 保存识别结果、解析状态、错误码 |
 | `write_requests` | 所有写入的确认门禁 |
-| `domain_events` | 领域事件审计与投影来源 |
-| `outbox_messages` | 可靠投递到 WS / 通知 / 投影 |
-| `sync_cursors` | 客户端补拉游标 |
+| `domain_events` | 领域事件审计与补拉来源 |
+
+P0 断线补拉不持久化服务端游标：客户端在 WS `sync.request` 里带上自己保存的 `last_event_cursor`（一个整数），服务端按这个游标从 `domain_events` 里补发。多设备各自独立游标、服务端不需要按用户/设备存储游标状态。等到需要多设备协同游标或跨会话补发时，再引入按用户/设备持久化的游标表。
 
 ### 9.2 Shared Item Tables
 
@@ -1013,7 +1035,6 @@ P0 运行时只激活以下链路：
   -> ConfirmationGate
   -> calendar / todo / reminder(time/place)
   -> DomainEvent
-  -> Outbox
   -> WS Projection
   -> Local Notification Registration
   -> Optional Cloud Fallback State

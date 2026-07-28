@@ -26,7 +26,7 @@ JsonObject = dict[str, Any]
 
 
 def utc_now() -> datetime:
-    """Return a timezone-aware current timestamp."""
+    """处理实例相关逻辑。"""
 
     return datetime.now(UTC)
 
@@ -108,19 +108,6 @@ class DomainEvent:
     payload: JsonObject
 
 
-@dataclass(slots=True)
-class OutboxMessage:
-    """Skeleton outbox message derived from domain events."""
-
-    id: str
-    event_id: str
-    channel: str
-    payload: JsonObject
-    status: str = "pending"
-    attempts: int = 0
-    created_at: datetime = field(default_factory=utc_now)
-    updated_at: datetime = field(default_factory=utc_now)
-
 
 @dataclass(slots=True)
 class Item:
@@ -136,25 +123,13 @@ class Item:
     end_at: datetime | None = None
     due_at: datetime | None = None
     place_text: str | None = None
-    timezone: str = "UTC"
-    version: int = 1
-    created_at: datetime = field(default_factory=utc_now)
-    updated_at: datetime = field(default_factory=utc_now)
-
-
-@dataclass(slots=True)
-class Place:
-    """Skeleton place model for home/work/custom/parking locations."""
-
-    id: str
-    user_id: str
-    label: str
-    place_type: str
+    place_type: str | None = None
     latitude: str | None = None
     longitude: str | None = None
     accuracy_meters: int | None = None
     radius_meters: int = 100
-    description: str | None = None
+    timezone: str = "UTC"
+    version: int = 1
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
 
@@ -182,7 +157,6 @@ class Reminder:
     item_id: str
     trigger_type: ReminderTriggerType
     trigger_at: datetime | None = None
-    place_id: str | None = None
     priority: ReminderPriority = ReminderPriority.NORMAL
     delivery_channel: DeliveryChannel = DeliveryChannel.LOCAL_NOTIFICATION
     status: ReminderStatus = ReminderStatus.PENDING

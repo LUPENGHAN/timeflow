@@ -7,15 +7,13 @@ used by the API runtime so Swagger calls persist to the configured database.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from threading import RLock
+from typing import Protocol
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from timeapp.domain.enums import (
-    CommandAction,
-    CommandEntity,
     DeliveryChannel,
     DomainEventType,
     FallbackStatus,
@@ -28,73 +26,185 @@ from timeapp.domain.enums import (
     WriteRequestStatus,
 )
 from timeapp.domain.models import (
-    Command,
     DomainEvent,
-    Identity,
     Item,
-    OutboxMessage,
-    Place,
     Reminder,
     RepeatRule,
-    VoiceCommand,
     WriteRequest,
 )
 from timeapp.infrastructure.models import (
     DomainEventRecord,
     ItemRecord,
-    OutboxMessageRecord,
-    PlaceRecord,
     ReminderRecord,
     ReminderRuleRecord,
-    VoiceCommandRecord,
-    WriteRequestRecord,
 )
+
+
+class Store(Protocol):
+    """Structural interface shared by `InMemoryStore` and `SqlAlchemyStore`.
+
+    Capability and application code should type their `store` parameter as
+    this Protocol rather than `InMemoryStore | SqlAlchemyStore`. That makes
+    mypy verify both concrete stores stay in sync on every method they share,
+    instead of relying on the two implementations happening to agree.
+    """
+
+    @property
+    def events(self) -> list[DomainEvent]:
+        """获取事件列表。"""
+        ...
+
+    @property
+    def write_requests(self) -> dict[str, WriteRequest]:
+        """获取写请求映射。"""
+        ...
+
+    def add_write_request(self, write_request: WriteRequest) -> None:
+        """新增写请求。"""
+        ...
+
+    def update_write_request(self, write_request: WriteRequest) -> None:
+        """更新写请求。"""
+        ...
+
+    def get_write_request(self, write_request_id: str) -> WriteRequest | None:
+        """按 ID 获取写请求。"""
+        ...
+
+    def list_pending_write_requests(self, user_id: str) -> list[WriteRequest]:
+        """列出当前用户待确认的写请求。"""
+        ...
+
+    def add_item(self, item: Item) -> None:
+        """新增事项。"""
+        ...
+
+    def get_item(self, item_id: str) -> Item | None:
+        """获取事项。"""
+        ...
+
+    def update_item(self, item: Item) -> None:
+        """更新事项。"""
+        ...
+
+    def list_items(self, user_id: str) -> list[Item]:
+        """列出用户事项。"""
+        ...
+
+    def add_repeat_rule(self, repeat_rule: RepeatRule) -> None:
+        """新增重复规则。"""
+        ...
+
+    def list_repeat_rules(self, user_id: str) -> list[RepeatRule]:
+        """列出用户重复规则。"""
+        ...
+
+    def add_reminder(self, reminder: Reminder) -> None:
+        """新增提醒。"""
+        ...
+
+    def get_reminder(self, reminder_id: str) -> Reminder | None:
+        """获取提醒。"""
+        ...
+
+    def update_reminder(self, reminder: Reminder) -> None:
+        """更新提醒。"""
+        ...
+
+    def list_reminders(self, user_id: str) -> list[Reminder]:
+        """列出用户提醒。"""
+        ...
+
+    def add_events(self, events: list[DomainEvent]) -> None:
+        """新增事件。"""
+        ...
+
+    def list_events_after(self, cursor: int = 0) -> list[DomainEvent]:
+        """列出指定游标之后的事件。"""
+        ...
+
+
+@dataclass(slots=True)
+class WriteRequestMemoryStore:
+    """Process-lifetime in-memory write-request bucket, shared across requests.
+
+    `SqlAlchemyStore` is constructed fresh per HTTP request (see
+    `api/dependencies.py`), so write requests can't live as a field on the
+    store instance itself -- they would vanish before the client's follow-up
+    confirm/reject request arrives. Callers share one instance across
+    requests instead, the same pattern `RealtimeConnectionManager`
+    (`api/realtime.py`) uses for WS connections.
+    """
+
+    _write_requests: dict[str, WriteRequest] = field(default_factory=dict)
+    _lock: RLock = field(default_factory=RLock)
+
+    def add(self, write_request: WriteRequest) -> None:
+        """新增写请求。"""
+
+        with self._lock:
+            self._write_requests[write_request.id] = write_request
+
+    def update(self, write_request: WriteRequest) -> None:
+        """更新写请求。"""
+
+        self.add(write_request)
+
+    def get(self, write_request_id: str) -> WriteRequest | None:
+        """按 ID 获取写请求。"""
+
+        with self._lock:
+            return self._write_requests.get(write_request_id)
+
+    def list_pending(self, user_id: str) -> list[WriteRequest]:
+        """列出当前用户待确认的写请求。"""
+
+        with self._lock:
+            return [
+                request
+                for request in self._write_requests.values()
+                if request.identity.user_id == user_id
+                and request.status == WriteRequestStatus.PENDING
+            ]
+
+    @property
+    def all(self) -> dict[str, WriteRequest]:
+        """返回全部写请求的快照。"""
+
+        with self._lock:
+            return dict(self._write_requests)
 
 
 @dataclass(slots=True)
 class InMemoryStore:
     """Small explicit storage boundary used by tests and local skeleton routes."""
 
-    voice_commands: dict[str, VoiceCommand] = field(default_factory=dict)
     write_requests: dict[str, WriteRequest] = field(default_factory=dict)
     items: dict[str, Item] = field(default_factory=dict)
-    places: dict[str, Place] = field(default_factory=dict)
     repeat_rules: dict[str, RepeatRule] = field(default_factory=dict)
     reminders: dict[str, Reminder] = field(default_factory=dict)
     events: list[DomainEvent] = field(default_factory=list)
-    outbox_messages: list[OutboxMessage] = field(default_factory=list)
     _lock: RLock = field(default_factory=RLock)
 
-    def add_voice_command(self, voice_command: VoiceCommand) -> None:
-        """Persist a voice command audit record."""
-
-        with self._lock:
-            self.voice_commands[voice_command.id] = voice_command
-
-    def update_voice_command(self, voice_command: VoiceCommand) -> None:
-        """Persist an updated voice command audit record."""
-
-        self.add_voice_command(voice_command)
-
     def add_write_request(self, write_request: WriteRequest) -> None:
-        """Persist a pending write request."""
+        """新增写请求。"""
 
         with self._lock:
             self.write_requests[write_request.id] = write_request
 
     def update_write_request(self, write_request: WriteRequest) -> None:
-        """Persist an updated write request."""
+        """更新写请求。"""
 
         self.add_write_request(write_request)
 
     def get_write_request(self, write_request_id: str) -> WriteRequest | None:
-        """Load a write request by id."""
+        """按 ID 获取写请求。"""
 
         with self._lock:
             return self.write_requests.get(write_request_id)
 
     def list_pending_write_requests(self, user_id: str) -> list[WriteRequest]:
-        """Return pending write requests for a user."""
+        """列出当前用户待确认的写请求。"""
 
         with self._lock:
             return [
@@ -105,60 +215,31 @@ class InMemoryStore:
             ]
 
     def add_item(self, item: Item) -> None:
-        """Persist a calendar or todo item."""
+        """新增事项。"""
 
         with self._lock:
             self.items[item.id] = item
 
     def get_item(self, item_id: str) -> Item | None:
-        """Load an item by id."""
+        """获取事项。"""
 
         with self._lock:
             return self.items.get(item_id)
 
     def update_item(self, item: Item) -> None:
-        """Persist an updated item."""
+        """更新事项。"""
 
         with self._lock:
             self.items[item.id] = item
 
-    def add_place(self, place: Place) -> None:
-        """Persist a place."""
-
-        with self._lock:
-            self.places[place.id] = place
-
-    def get_place(self, place_id: str) -> Place | None:
-        """Load a place by id."""
-
-        with self._lock:
-            return self.places.get(place_id)
-
-    def update_place(self, place: Place) -> None:
-        """Persist an updated place."""
-
-        self.add_place(place)
-
-    def delete_place(self, place_id: str) -> None:
-        """Delete a place by id."""
-
-        with self._lock:
-            self.places.pop(place_id, None)
-
-    def list_places(self, user_id: str) -> list[Place]:
-        """Return all visible places for a user."""
-
-        with self._lock:
-            return [place for place in self.places.values() if place.user_id == user_id]
-
     def add_repeat_rule(self, repeat_rule: RepeatRule) -> None:
-        """Persist a repeat rule."""
+        """新增重复规则。"""
 
         with self._lock:
             self.repeat_rules[repeat_rule.id] = repeat_rule
 
     def list_repeat_rules(self, user_id: str) -> list[RepeatRule]:
-        """Return repeat rules for a user."""
+        """列出用户重复规则。"""
 
         with self._lock:
             return [
@@ -168,49 +249,40 @@ class InMemoryStore:
             ]
 
     def add_reminder(self, reminder: Reminder) -> None:
-        """Persist a reminder."""
+        """新增提醒。"""
 
         with self._lock:
             self.reminders[reminder.id] = reminder
 
     def get_reminder(self, reminder_id: str) -> Reminder | None:
-        """Load a reminder by id."""
+        """获取提醒。"""
 
         with self._lock:
             return self.reminders.get(reminder_id)
 
     def update_reminder(self, reminder: Reminder) -> None:
-        """Persist an updated reminder."""
+        """更新提醒。"""
 
         with self._lock:
             self.reminders[reminder.id] = reminder
 
     def list_reminders(self, user_id: str) -> list[Reminder]:
-        """Return reminders for a user."""
+        """列出用户提醒。"""
 
         with self._lock:
             return [reminder for reminder in self.reminders.values() if reminder.user_id == user_id]
 
     def add_events(self, events: list[DomainEvent]) -> None:
-        """Append domain events in order."""
+        """新增事件。"""
 
         with self._lock:
             start_version = len(self.events) + 1
             for index, event in enumerate(events):
                 event.version = start_version + index
             self.events.extend(events)
-            self.outbox_messages.extend(
-                OutboxMessage(
-                    id=event.id,
-                    event_id=event.id,
-                    channel="ws",
-                    payload=event.payload,
-                )
-                for event in events
-            )
 
     def list_items(self, user_id: str) -> list[Item]:
-        """Return all visible items for a user."""
+        """列出用户事项。"""
 
         with self._lock:
             return [
@@ -220,129 +292,79 @@ class InMemoryStore:
             ]
 
     def list_events_after(self, cursor: int = 0) -> list[DomainEvent]:
-        """Return events after a one-based cursor."""
+        """列出事件 after。"""
 
         with self._lock:
             return self.events[cursor:]
 
-    def list_outbox_messages(self) -> list[OutboxMessage]:
-        """Return in-memory outbox messages."""
-
-        with self._lock:
-            return list(self.outbox_messages)
-
 
 class SqlAlchemyStore:
-    """SQLAlchemy implementation used by the real API runtime."""
+    """SQLAlchemy implementation used by the real API runtime.
 
-    def __init__(self, session: Session) -> None:
+    `write_requests` is intentionally NOT persisted to the database -- see
+    `WriteRequestMemoryStore`'s docstring. Callers must pass a shared
+    instance so pending write requests survive across the per-request
+    `SqlAlchemyStore` objects FastAPI constructs.
+    """
+
+    def __init__(self, session: Session, write_requests: WriteRequestMemoryStore) -> None:
+        """初始化实例。"""
         self.session = session
+        self._write_requests = write_requests
 
     @property
     def events(self) -> list[DomainEvent]:
-        """Return all events for compatibility with existing event version logic."""
+        """处理SQLAlchemy 存储相关逻辑。"""
 
         return self.list_events_after(0)
 
     @property
     def write_requests(self) -> dict[str, WriteRequest]:
-        """Return all write requests keyed by id for compatibility with legacy code."""
+        """处理SQLAlchemy 存储相关逻辑。"""
 
-        records = self.session.scalars(select(WriteRequestRecord)).all()
-        return {record.id: self._write_request_from_record(record) for record in records}
+        return self._write_requests.all
 
     @property
     def reminders(self) -> dict[str, Reminder]:
-        """Return all reminders keyed by id for compatibility with legacy code."""
+        """处理SQLAlchemy 存储相关逻辑。"""
 
         records = self.session.scalars(select(ReminderRecord)).all()
         return {record.id: self._reminder_from_record(record) for record in records}
 
-    def add_voice_command(self, voice_command: VoiceCommand) -> None:
-        """Persist a voice command audit record."""
-
-        self.session.add(
-            VoiceCommandRecord(
-                id=voice_command.id,
-                user_id=voice_command.identity.user_id,
-                device_id=voice_command.identity.device_id,
-                session_id=voice_command.identity.session_id,
-                transcript=voice_command.transcript,
-                status=voice_command.status.value,
-                parsed_command={"command_id": voice_command.command_id},
-                error_code=voice_command.error_code,
-                created_at=voice_command.created_at,
-                updated_at=voice_command.updated_at,
-            )
-        )
-        self.session.flush()
-
-    def update_voice_command(self, voice_command: VoiceCommand) -> None:
-        """Persist an updated voice command audit record."""
-
-        record = self.session.get(VoiceCommandRecord, voice_command.id)
-        if record is None:
-            self.add_voice_command(voice_command)
-            return
-        record.status = voice_command.status.value
-        record.parsed_command = {"command_id": voice_command.command_id}
-        record.error_code = voice_command.error_code
-        record.updated_at = voice_command.updated_at
-        self.session.flush()
-
     def add_write_request(self, write_request: WriteRequest) -> None:
-        """Persist a pending write request."""
+        """新增写请求。"""
 
-        self.session.add(self._write_request_to_record(write_request))
-        self.session.flush()
+        self._write_requests.add(write_request)
 
     def update_write_request(self, write_request: WriteRequest) -> None:
-        """Persist an updated write request."""
+        """更新写请求。"""
 
-        record = self.session.get(WriteRequestRecord, write_request.id)
-        if record is None:
-            self.add_write_request(write_request)
-            return
-        record.candidate_payload = write_request.candidate_payload
-        record.payload_hash = write_request.payload_hash
-        record.status = write_request.status.value
-        record.expires_at = write_request.expires_at
-        record.updated_at = write_request.updated_at
-        self.session.flush()
+        self._write_requests.update(write_request)
 
     def get_write_request(self, write_request_id: str) -> WriteRequest | None:
-        """Load a write request by id."""
+        """按 ID 获取写请求。"""
 
-        record = self.session.get(WriteRequestRecord, write_request_id)
-        return self._write_request_from_record(record) if record is not None else None
+        return self._write_requests.get(write_request_id)
 
     def list_pending_write_requests(self, user_id: str) -> list[WriteRequest]:
-        """Return pending write requests for a user."""
+        """列出当前用户待确认的写请求。"""
 
-        records = self.session.scalars(
-            select(WriteRequestRecord)
-            .where(
-                WriteRequestRecord.user_id == user_id,
-                WriteRequestRecord.status == WriteRequestStatus.PENDING.value,
-            )
-            .order_by(WriteRequestRecord.created_at)
-        ).all()
-        return [self._write_request_from_record(record) for record in records]
+        return self._write_requests.list_pending(user_id)
 
     def add_item(self, item: Item) -> None:
-        """Persist a calendar or todo item."""
+        """新增事项。"""
 
         self.session.add(self._item_to_record(item))
         self.session.flush()
 
     def get_item(self, item_id: str) -> Item | None:
-        """Load an item by id."""
+        """获取事项。"""
 
         record = self.session.get(ItemRecord, item_id)
         return self._item_from_record(record) if record is not None else None
 
     def update_item(self, item: Item) -> None:
-        """Persist an updated item."""
+        """更新事项。"""
 
         record = self.session.get(ItemRecord, item.id)
         if record is None:
@@ -356,6 +378,11 @@ class SqlAlchemyStore:
         record.end_at = item.end_at
         record.due_at = item.due_at
         record.place_text = item.place_text
+        record.place_type = item.place_type
+        record.latitude = item.latitude
+        record.longitude = item.longitude
+        record.accuracy_meters = item.accuracy_meters
+        record.radius_meters = item.radius_meters
         record.timezone = item.timezone
         record.version = item.version
         record.updated_at = item.updated_at
@@ -363,7 +390,7 @@ class SqlAlchemyStore:
         self.session.flush()
 
     def list_items(self, user_id: str) -> list[Item]:
-        """Return all visible items for a user."""
+        """列出用户事项。"""
 
         records = self.session.scalars(
             select(ItemRecord)
@@ -375,69 +402,8 @@ class SqlAlchemyStore:
         ).all()
         return [self._item_from_record(record) for record in records]
 
-    def add_place(self, place: Place) -> None:
-        """Persist a place."""
-
-        self.session.add(
-            PlaceRecord(
-                id=place.id,
-                user_id=place.user_id,
-                label=place.label,
-                place_type=place.place_type,
-                latitude=place.latitude,
-                longitude=place.longitude,
-                accuracy_meters=place.accuracy_meters,
-                radius_meters=place.radius_meters,
-                description=place.description,
-                created_at=place.created_at,
-                updated_at=place.updated_at,
-            )
-        )
-        self.session.flush()
-
-    def get_place(self, place_id: str) -> Place | None:
-        """Load a place by id."""
-
-        record = self.session.get(PlaceRecord, place_id)
-        return self._place_from_record(record) if record is not None else None
-
-    def update_place(self, place: Place) -> None:
-        """Persist an updated place."""
-
-        record = self.session.get(PlaceRecord, place.id)
-        if record is None:
-            self.add_place(place)
-            return
-        record.label = place.label
-        record.place_type = place.place_type
-        record.latitude = place.latitude
-        record.longitude = place.longitude
-        record.accuracy_meters = place.accuracy_meters
-        record.radius_meters = place.radius_meters
-        record.description = place.description
-        record.updated_at = place.updated_at
-        self.session.flush()
-
-    def delete_place(self, place_id: str) -> None:
-        """Delete a place by id."""
-
-        record = self.session.get(PlaceRecord, place_id)
-        if record is not None:
-            self.session.delete(record)
-            self.session.flush()
-
-    def list_places(self, user_id: str) -> list[Place]:
-        """Return all visible places for a user."""
-
-        records = self.session.scalars(
-            select(PlaceRecord)
-            .where(PlaceRecord.user_id == user_id)
-            .order_by(PlaceRecord.created_at)
-        ).all()
-        return [self._place_from_record(record) for record in records]
-
     def add_repeat_rule(self, repeat_rule: RepeatRule) -> None:
-        """Persist a repeat rule using the skeleton reminder_rules table."""
+        """新增重复规则。"""
 
         self.session.add(
             ReminderRuleRecord(
@@ -457,7 +423,7 @@ class SqlAlchemyStore:
         self.session.flush()
 
     def list_repeat_rules(self, user_id: str) -> list[RepeatRule]:
-        """Return repeat rules for a user."""
+        """列出用户重复规则。"""
 
         records = self.session.scalars(
             select(ReminderRuleRecord)
@@ -467,19 +433,19 @@ class SqlAlchemyStore:
         return [self._repeat_rule_from_record(record) for record in records]
 
     def add_reminder(self, reminder: Reminder) -> None:
-        """Persist a reminder."""
+        """新增提醒。"""
 
         self.session.add(self._reminder_to_record(reminder))
         self.session.flush()
 
     def get_reminder(self, reminder_id: str) -> Reminder | None:
-        """Load a reminder by id."""
+        """获取提醒。"""
 
         record = self.session.get(ReminderRecord, reminder_id)
         return self._reminder_from_record(record) if record is not None else None
 
     def update_reminder(self, reminder: Reminder) -> None:
-        """Persist an updated reminder."""
+        """更新提醒。"""
 
         record = self.session.get(ReminderRecord, reminder.id)
         if record is None:
@@ -487,7 +453,6 @@ class SqlAlchemyStore:
             return
         record.trigger_type = reminder.trigger_type.value
         record.trigger_at = reminder.trigger_at
-        record.place_id = reminder.place_id
         record.priority = reminder.priority.value
         record.delivery_channel = reminder.delivery_channel.value
         record.status = reminder.status.value
@@ -506,7 +471,7 @@ class SqlAlchemyStore:
         self.session.flush()
 
     def list_reminders(self, user_id: str) -> list[Reminder]:
-        """Return reminders for a user."""
+        """列出用户提醒。"""
 
         records = self.session.scalars(
             select(ReminderRecord)
@@ -516,9 +481,11 @@ class SqlAlchemyStore:
         return [self._reminder_from_record(record) for record in records]
 
     def add_events(self, events: list[DomainEvent]) -> None:
-        """Append domain events and matching outbox messages."""
+        """新增事件。"""
 
-        current_max_version = self.session.scalar(select(DomainEventRecord.version).order_by(DomainEventRecord.version.desc()).limit(1))
+        current_max_version = self.session.scalar(
+            select(DomainEventRecord.version).order_by(DomainEventRecord.version.desc()).limit(1)
+        )
         start_version = int(current_max_version or 0) + 1
         for event in events:
             event.version = start_version
@@ -533,23 +500,11 @@ class SqlAlchemyStore:
                     payload=event.payload,
                 )
             )
-            self.session.add(
-                OutboxMessageRecord(
-                    id=event.id,
-                    event_id=event.id,
-                    channel="ws",
-                    payload=event.payload,
-                    status="pending",
-                    attempts=0,
-                    created_at=event.occurred_at,
-                    updated_at=event.occurred_at,
-                )
-            )
             start_version += 1
         self.session.flush()
 
     def list_events_after(self, cursor: int = 0) -> list[DomainEvent]:
-        """Return events after a one-based cursor."""
+        """列出事件 after。"""
 
         records = self.session.scalars(
             select(DomainEventRecord)
@@ -558,65 +513,8 @@ class SqlAlchemyStore:
         ).all()
         return [self._event_from_record(record) for record in records]
 
-    def list_outbox_messages(self) -> list[OutboxMessage]:
-        """Return outbox messages."""
-
-        records = self.session.scalars(
-            select(OutboxMessageRecord).order_by(OutboxMessageRecord.created_at)
-        ).all()
-        return [self._outbox_from_record(record) for record in records]
-
-    def _write_request_to_record(self, write_request: WriteRequest) -> WriteRequestRecord:
-        return WriteRequestRecord(
-            id=write_request.id,
-            user_id=write_request.identity.user_id,
-            source_command_id=write_request.source_command_id,
-            action=write_request.command.action.value,
-            entity=write_request.command.entity.value,
-            target_id=write_request.command.target_id,
-            candidate_payload=write_request.candidate_payload,
-            payload_hash=write_request.payload_hash,
-            idempotency_key=write_request.idempotency_key,
-            status=write_request.status.value,
-            expires_at=write_request.expires_at,
-            created_at=write_request.created_at,
-            updated_at=write_request.updated_at,
-        )
-
-    def _write_request_from_record(self, record: WriteRequestRecord) -> WriteRequest:
-        identity = Identity(user_id=record.user_id)
-        item_payload = record.candidate_payload.get("item", {})
-        if not isinstance(item_payload, dict):
-            item_payload = {}
-        command = Command(
-            id=record.source_command_id,
-            identity=identity,
-            action=CommandAction(record.action),
-            entity=CommandEntity(record.entity),
-            title=self._optional_str(item_payload.get("title")),
-            description=self._optional_str(item_payload.get("description")),
-            target_id=record.target_id,
-            start_at=self._optional_datetime(item_payload.get("start_at")),
-            end_at=self._optional_datetime(item_payload.get("end_at")),
-            due_at=self._optional_datetime(item_payload.get("due_at")),
-            payload=record.candidate_payload,
-            created_at=record.created_at,
-        )
-        return WriteRequest(
-            id=record.id,
-            identity=identity,
-            source_command_id=record.source_command_id,
-            command=command,
-            candidate_payload=record.candidate_payload,
-            payload_hash=record.payload_hash,
-            expires_at=record.expires_at,
-            idempotency_key=record.idempotency_key,
-            status=WriteRequestStatus(record.status),
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-        )
-
     def _item_to_record(self, item: Item) -> ItemRecord:
+        """将事项转换为记录。"""
         return ItemRecord(
             id=item.id,
             user_id=item.user_id,
@@ -628,6 +526,11 @@ class SqlAlchemyStore:
             end_at=item.end_at,
             due_at=item.due_at,
             place_text=item.place_text,
+            place_type=item.place_type,
+            latitude=item.latitude,
+            longitude=item.longitude,
+            accuracy_meters=item.accuracy_meters,
+            radius_meters=item.radius_meters,
             timezone=item.timezone,
             version=item.version,
             created_at=item.created_at,
@@ -636,6 +539,7 @@ class SqlAlchemyStore:
         )
 
     def _item_from_record(self, record: ItemRecord) -> Item:
+        """从记录还原事项。"""
         return Item(
             id=record.id,
             user_id=record.user_id,
@@ -647,28 +551,19 @@ class SqlAlchemyStore:
             end_at=record.end_at,
             due_at=record.due_at,
             place_text=record.place_text,
+            place_type=record.place_type,
+            latitude=record.latitude,
+            longitude=record.longitude,
+            accuracy_meters=record.accuracy_meters,
+            radius_meters=record.radius_meters,
             timezone=record.timezone,
             version=record.version,
             created_at=record.created_at,
             updated_at=record.updated_at,
         )
 
-    def _place_from_record(self, record: PlaceRecord) -> Place:
-        return Place(
-            id=record.id,
-            user_id=record.user_id,
-            label=record.label,
-            place_type=record.place_type,
-            latitude=record.latitude,
-            longitude=record.longitude,
-            accuracy_meters=record.accuracy_meters,
-            radius_meters=record.radius_meters,
-            description=record.description,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-        )
-
     def _repeat_rule_from_record(self, record: ReminderRuleRecord) -> RepeatRule:
+        """从记录还原重复规则。"""
         payload = record.rule_payload
         weekdays = payload.get("weekdays", [])
         if not isinstance(weekdays, list):
@@ -685,13 +580,13 @@ class SqlAlchemyStore:
         )
 
     def _reminder_to_record(self, reminder: Reminder) -> ReminderRecord:
+        """将提醒转换为记录。"""
         return ReminderRecord(
             id=reminder.id,
             user_id=reminder.user_id,
             item_id=reminder.item_id,
             trigger_type=reminder.trigger_type.value,
             trigger_at=reminder.trigger_at,
-            place_id=reminder.place_id,
             priority=reminder.priority.value,
             delivery_channel=reminder.delivery_channel.value,
             status=reminder.status.value,
@@ -711,13 +606,13 @@ class SqlAlchemyStore:
         )
 
     def _reminder_from_record(self, record: ReminderRecord) -> Reminder:
+        """从记录还原提醒。"""
         return Reminder(
             id=record.id,
             user_id=record.user_id,
             item_id=record.item_id,
             trigger_type=ReminderTriggerType(record.trigger_type),
             trigger_at=record.trigger_at,
-            place_id=record.place_id,
             priority=ReminderPriority(record.priority),
             delivery_channel=DeliveryChannel(record.delivery_channel),
             status=ReminderStatus(record.status),
@@ -739,6 +634,7 @@ class SqlAlchemyStore:
         )
 
     def _event_from_record(self, record: DomainEventRecord) -> DomainEvent:
+        """从记录还原事件。"""
         return DomainEvent(
             id=record.id,
             event_type=DomainEventType(record.event_type),
@@ -749,24 +645,6 @@ class SqlAlchemyStore:
             payload=record.payload,
         )
 
-    def _outbox_from_record(self, record: OutboxMessageRecord) -> OutboxMessage:
-        return OutboxMessage(
-            id=record.id,
-            event_id=record.event_id,
-            channel=record.channel,
-            payload=record.payload,
-            status=record.status,
-            attempts=record.attempts,
-            created_at=record.created_at,
-            updated_at=record.updated_at,
-        )
-
     def _optional_str(self, value: object) -> str | None:
+        """处理SQLAlchemy 存储相关逻辑。"""
         return value if isinstance(value, str) and value else None
-
-    def _optional_datetime(self, value: object) -> datetime | None:
-        if isinstance(value, datetime):
-            return value
-        if not isinstance(value, str) or not value:
-            return None
-        return datetime.fromisoformat(value)

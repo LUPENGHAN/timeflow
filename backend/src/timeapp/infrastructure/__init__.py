@@ -1,1 +1,1 @@
-"""Infrastructure adapter boundaries for database, outbox, notification and WS."""
+"""Infrastructure adapter boundaries for database, notification and WS."""

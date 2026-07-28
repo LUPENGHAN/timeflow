@@ -1,23 +1,24 @@
-"""Calendar capability handler for confirmed write requests."""
+"""Calendar capability handler: create, update, delete and query calendar events."""
 
-from datetime import datetime
-from typing import Any
+from __future__ import annotations
+
 from uuid import uuid4
 
-from timeapp.application.store import InMemoryStore, SqlAlchemyStore
+from timeapp.application.store import Store
+from timeapp.capabilities import item_common
 from timeapp.domain.enums import DomainEventType, ItemType
-from timeapp.domain.models import DomainEvent, Item, WriteRequest, utc_now
+from timeapp.domain.models import DomainEvent, Identity, Item, WriteRequest, utc_now
 
 
 class CalendarCapability:
-    """Create calendar events after the confirmation gate has approved them."""
+    """Own calendar_event items after the confirmation gate has approved them."""
 
     def apply(
         self,
         write_request: WriteRequest,
-        store: InMemoryStore | SqlAlchemyStore,
+        store: Store,
     ) -> list[DomainEvent]:
-        """Create a calendar item and emit an item-created event."""
+        """应用处理逻辑。"""
 
         item_payload = write_request.candidate_payload["item"]
         item = Item(
@@ -25,9 +26,15 @@ class CalendarCapability:
             user_id=write_request.identity.user_id,
             item_type=ItemType.CALENDAR_EVENT,
             title=str(item_payload["title"]),
-            description=self._optional_str(item_payload.get("description")),
-            start_at=self._optional_datetime(item_payload.get("start_at")),
-            end_at=self._optional_datetime(item_payload.get("end_at")),
+            description=item_common.optional_str(item_payload.get("description")),
+            start_at=item_common.optional_datetime(item_payload.get("start_at")),
+            end_at=item_common.optional_datetime(item_payload.get("end_at")),
+            place_text=item_common.optional_str(item_payload.get("place_text")),
+            place_type=item_common.optional_str(item_payload.get("place_type")),
+            latitude=item_common.optional_str(item_payload.get("latitude")),
+            longitude=item_common.optional_str(item_payload.get("longitude")),
+            accuracy_meters=item_common.optional_int(item_payload.get("accuracy_meters")),
+            radius_meters=item_common.optional_int(item_payload.get("radius_meters")) or 100,
         )
         store.add_item(item)
         return [
@@ -38,26 +45,27 @@ class CalendarCapability:
                 aggregate_id=item.id,
                 version=len(store.events) + 1,
                 occurred_at=utc_now(),
-                payload={"item": self._item_payload(item)},
+                payload={"item": item_common.item_payload(item)},
             )
         ]
 
-    def _optional_datetime(self, value: Any) -> datetime | None:
-        if not isinstance(value, str) or not value:
-            return None
-        return datetime.fromisoformat(value)
+    def update(
+        self,
+        store: Store,
+        identity: Identity,
+        item_id: str,
+        changes: dict[str, object],
+    ) -> tuple[Item, list[DomainEvent]]:
+        """更新既有对象。"""
 
-    def _optional_str(self, value: Any) -> str | None:
-        return value if isinstance(value, str) and value else None
+        return item_common.update_item_fields(store, identity, item_id, changes)
 
-    def _item_payload(self, item: Item) -> dict[str, Any]:
-        return {
-            "id": item.id,
-            "type": item.item_type.value,
-            "title": item.title,
-            "description": item.description,
-            "start_at": item.start_at.isoformat() if item.start_at else None,
-            "end_at": item.end_at.isoformat() if item.end_at else None,
-            "due_at": item.due_at.isoformat() if item.due_at else None,
-            "status": item.status.value,
-        }
+    def delete(
+        self,
+        store: Store,
+        identity: Identity,
+        item_id: str,
+    ) -> tuple[Item, list[DomainEvent]]:
+        """删除既有对象。"""
+
+        return item_common.delete_item(store, identity, item_id)

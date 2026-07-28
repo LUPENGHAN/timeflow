@@ -3,8 +3,13 @@
 from datetime import UTC, datetime
 
 from timeapp.context.policies import CloudFallbackPolicy
-from timeapp.domain.enums import FallbackStatus, ReminderPriority, ReminderStatus
-from timeapp.domain.models import Reminder, ReminderTriggerType
+from timeapp.domain.enums import (
+    FallbackStatus,
+    ReminderPriority,
+    ReminderStatus,
+    ReminderTriggerType,
+)
+from timeapp.domain.models import Reminder
 
 
 def test_cloud_fallback_policy_marks_requested_and_builds_payload() -> None:

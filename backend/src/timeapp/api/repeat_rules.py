@@ -24,7 +24,7 @@ async def list_repeat_rules(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> list[RepeatRuleResponse]:
-    """Return repeat rules for the current user."""
+    """列出用户重复规则。"""
 
     return [RepeatRuleResponse.from_domain(rule) for rule in app.list_repeat_rules(identity)]
 
@@ -35,7 +35,7 @@ async def create_repeat_rule(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> RepeatRuleCreateResponse:
-    """Create a repeat rule skeleton record."""
+    """创建重复规则。"""
 
     try:
         repeat_rule = app.create_repeat_rule(

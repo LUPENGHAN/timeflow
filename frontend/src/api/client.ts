@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://127.0.0.1:8000/api/v1';
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -241,6 +243,53 @@ export function createVoiceCommand(transcript: string) {
     headers: { 'Content-Type': 'application/json' },
     method: 'POST',
   });
+}
+
+export async function createAudioVoiceCommand(audioUri: string) {
+  const fileName = getAudioFileName(audioUri);
+  const formData = new FormData();
+
+  if (Platform.OS === 'web') {
+    const audioResponse = await fetch(audioUri);
+    const audioBlob = await audioResponse.blob();
+    formData.append('audio', audioBlob, fileName);
+  } else {
+    formData.append('audio', {
+      name: fileName,
+      type: getAudioMimeType(fileName),
+      uri: audioUri,
+    } as unknown as Blob);
+  }
+
+  return apiFetch<VoiceCommandResult>('/voice/commands/audio', {
+    body: formData,
+    method: 'POST',
+  });
+}
+
+function getAudioFileName(audioUri: string) {
+  const path = audioUri.split('?')[0];
+  return path.split('/').pop() || `recording-${Date.now()}.m4a`;
+}
+
+function getAudioMimeType(fileName: string) {
+  const extension = fileName.split('.').pop()?.toLowerCase();
+  if (extension === 'webm') {
+    return 'audio/webm';
+  }
+  if (extension === 'wav') {
+    return 'audio/wav';
+  }
+  if (extension === 'mp3') {
+    return 'audio/mpeg';
+  }
+  if (extension === 'caf') {
+    return 'audio/x-caf';
+  }
+  if (extension === '3gp') {
+    return 'audio/3gpp';
+  }
+  return 'audio/mp4';
 }
 
 export function listPendingWriteRequests() {

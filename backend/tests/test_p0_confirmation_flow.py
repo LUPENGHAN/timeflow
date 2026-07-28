@@ -522,7 +522,7 @@ def test_write_request_can_create_time_reminder_for_existing_item() -> None:
 
 
 def test_write_request_can_create_place_reminder_for_existing_item() -> None:
-    """Place reminder creation can target an existing saved place."""
+    """Place reminder creation reads its trigger location off the target item."""
 
     test_app = TimeflowApplication(InMemoryStore())
     app.dependency_overrides[get_timeflow_app] = lambda: test_app
@@ -534,12 +534,12 @@ def test_write_request_can_create_place_reminder_for_existing_item() -> None:
         )
         assert created.status_code == 200
         item_id = created.json()["item"]["id"]
-        place = client.post(
-            "/api/v1/places",
-            json={"label": "家", "place_type": "home", "radius_meters": 100},
+
+        placed = client.patch(
+            f"/api/v1/items/{item_id}",
+            json={"place_text": "家", "place_type": "home"},
         )
-        assert place.status_code == 200
-        place_id = place.json()["place"]["id"]
+        assert placed.status_code == 200
 
         request = client.post(
             "/api/v1/write-requests",
@@ -552,7 +552,6 @@ def test_write_request_can_create_place_reminder_for_existing_item() -> None:
                     "reminders": [
                         {
                             "trigger_type": "enter_place",
-                            "place_id": place_id,
                             "priority": "normal",
                         }
                     ],
@@ -568,7 +567,6 @@ def test_write_request_can_create_place_reminder_for_existing_item() -> None:
         items = client.get("/api/v1/items").json()
         reminder = items[0]["reminders"][0]
         assert reminder["trigger_type"] == "enter_place"
-        assert reminder["place_id"] == place_id
         assert reminder["status"] == "armed"
 
     app.dependency_overrides.clear()

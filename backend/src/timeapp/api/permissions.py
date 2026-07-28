@@ -27,7 +27,7 @@ async def degrade_permission(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> PermissionDegradeResponse:
-    """Apply a stable MVP permission degradation path."""
+    """处理权限降级。"""
 
     try:
         item, events = app.degrade_permission(

@@ -103,6 +103,50 @@ def test_reminder_actions_snooze_dismiss_and_cancel() -> None:
     app.dependency_overrides.clear()
 
 
+def test_reminder_snooze_is_limited_to_one_p0_allowance() -> None:
+    """A second snooze on the same reminder must be rejected."""
+
+    test_app = TimeflowApplication(InMemoryStore())
+    app.dependency_overrides[get_timeflow_app] = lambda: test_app
+
+    with TestClient(app) as client:
+        created = client.post(
+            "/api/v1/items",
+            json={"type": "todo", "title": "交材料"},
+        )
+        assert created.status_code == 200
+        item_id = created.json()["item"]["id"]
+        trigger_at = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+
+        reminder_response = client.post(
+            "/api/v1/reminders",
+            json={
+                "item_id": item_id,
+                "trigger_type": "time",
+                "trigger_at": trigger_at,
+                "priority": "normal",
+            },
+        )
+        assert reminder_response.status_code == 200
+        reminder = reminder_response.json()["reminder"]
+
+        first_snooze = client.post(
+            f"/api/v1/reminders/{reminder['id']}/actions",
+            json={"action": "snooze", "snooze_minutes": 15},
+        )
+        assert first_snooze.status_code == 200
+        assert first_snooze.json()["reminder"]["snooze_count"] == 1
+
+        second_snooze = client.post(
+            f"/api/v1/reminders/{reminder['id']}/actions",
+            json={"action": "snooze", "snooze_minutes": 15},
+        )
+        assert second_snooze.status_code == 409
+        assert second_snooze.json()["detail"]["code"] == "snooze_limit_reached"
+
+    app.dependency_overrides.clear()
+
+
 def test_place_reminder_can_be_armed_before_delivery() -> None:
     """Return-to-place reminders can be armed after the client detects leaving."""
 
@@ -112,15 +156,10 @@ def test_place_reminder_can_be_armed_before_delivery() -> None:
     with TestClient(app) as client:
         created = client.post(
             "/api/v1/items",
-            json={"type": "todo", "title": "回到这里提醒我拿伞"},
-        )
-        assert created.status_code == 200
-        item_id = created.json()["item"]["id"]
-
-        place_response = client.post(
-            "/api/v1/places",
             json={
-                "label": "当前位置",
+                "type": "todo",
+                "title": "回到这里提醒我拿伞",
+                "place_text": "当前位置",
                 "place_type": "temporary_parking",
                 "latitude": "31.230400",
                 "longitude": "121.473700",
@@ -128,15 +167,14 @@ def test_place_reminder_can_be_armed_before_delivery() -> None:
                 "radius_meters": 100,
             },
         )
-        assert place_response.status_code == 200
-        place_id = place_response.json()["place"]["id"]
+        assert created.status_code == 200
+        item_id = created.json()["item"]["id"]
 
         reminder_response = client.post(
             "/api/v1/reminders",
             json={
                 "item_id": item_id,
                 "trigger_type": "return_to_place",
-                "place_id": place_id,
                 "priority": "normal",
             },
         )

@@ -30,7 +30,7 @@ async def list_items(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> list[ItemResponse]:
-    """Return current user's calendar and todo items."""
+    """列出用户事项。"""
 
     items = app.list_items(identity)
     reminders_by_item: dict[str, list[Reminder]] = {}
@@ -49,7 +49,7 @@ async def create_item(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> ItemCreateResponse:
-    """Create a manual calendar or todo item."""
+    """创建事项。"""
 
     try:
         item_type = ItemType(request.type)
@@ -70,6 +70,11 @@ async def create_item(
         end_at=request.end_at,
         due_at=request.due_at,
         place_text=request.place_text,
+        place_type=request.place_type,
+        latitude=request.latitude,
+        longitude=request.longitude,
+        accuracy_meters=request.accuracy_meters,
+        radius_meters=request.radius_meters,
     )
     await realtime_manager.broadcast_events(events)
     return ItemCreateResponse(
@@ -85,7 +90,7 @@ async def update_item(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> ItemMutationResponse:
-    """Update editable fields on a calendar or todo item."""
+    """更新事项。"""
 
     try:
         item, events = app.update_item_fields(
@@ -111,7 +116,7 @@ async def complete_item(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> ItemMutationResponse:
-    """Mark a todo item as completed."""
+    """将事项标记为已完成。"""
 
     try:
         item, events = app.complete_item(identity, item_id)
@@ -133,7 +138,7 @@ async def cancel_complete_item(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> ItemMutationResponse:
-    """Move a completed todo item back to active."""
+    """处理实例相关逻辑。"""
 
     try:
         item, events = app.update_item(identity, item_id, status=ItemStatus.ACTIVE)
@@ -155,7 +160,7 @@ async def delete_item(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> ItemMutationResponse:
-    """Mark an item as deleted."""
+    """删除事项。"""
 
     try:
         item, events = app.delete_item(identity, item_id)

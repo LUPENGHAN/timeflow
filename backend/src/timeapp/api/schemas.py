@@ -10,8 +10,6 @@ from pydantic import BaseModel, Field
 from timeapp.domain.models import (
     DomainEvent,
     Item,
-    OutboxMessage,
-    Place,
     Reminder,
     RepeatRule,
     VoiceCommand,
@@ -24,11 +22,7 @@ RepeatSeriesStatusValue = Literal["active", "paused", "stopped"]
 
 
 class VoiceCommandCreateRequest(BaseModel):
-    """Create a voice command from a transcript.
-
-    Real ASR can later replace the transcript field with an uploaded audio
-    object while preserving the application flow.
-    """
+    """Create a voice command from an existing transcript."""
 
     transcript: str = Field(min_length=1)
 
@@ -44,6 +38,7 @@ class VoiceCommandResponse(BaseModel):
 
     @classmethod
     def from_domain(cls, voice_command: VoiceCommand) -> VoiceCommandResponse:
+        """从领域对象构造响应对象。"""
         return cls(
             id=voice_command.id,
             transcript=voice_command.transcript,
@@ -66,6 +61,7 @@ class WriteRequestResponse(BaseModel):
 
     @classmethod
     def from_domain(cls, write_request: WriteRequest) -> WriteRequestResponse:
+        """从领域对象构造响应对象。"""
         return cls(
             id=write_request.id,
             source_command_id=write_request.source_command_id,
@@ -90,6 +86,7 @@ class EventResponse(BaseModel):
 
     @classmethod
     def from_domain(cls, event: DomainEvent) -> EventResponse:
+        """从领域对象构造响应对象。"""
         return cls(
             event_id=event.id,
             event_type=event.event_type.value,
@@ -102,7 +99,7 @@ class EventResponse(BaseModel):
 
 
 class VoiceCommandCreateResponse(BaseModel):
-    """Response after mock ASR/parser intake."""
+    """Response after transcript or audio command intake."""
 
     voice_command: VoiceCommandResponse
     write_request: WriteRequestResponse | None
@@ -150,12 +147,18 @@ class ItemResponse(BaseModel):
     end_at: datetime | None
     due_at: datetime | None
     place_text: str | None
+    place_type: str | None
+    latitude: str | None
+    longitude: str | None
+    accuracy_meters: int | None
+    radius_meters: int
     version: int
     updated_at: datetime
     reminders: list[ReminderResponse] = Field(default_factory=list)
 
     @classmethod
     def from_domain(cls, item: Item, reminders: list[Reminder] | None = None) -> ItemResponse:
+        """从领域对象构造响应对象。"""
         return cls(
             id=item.id,
             type=item.item_type.value,
@@ -166,6 +169,11 @@ class ItemResponse(BaseModel):
             end_at=item.end_at,
             due_at=item.due_at,
             place_text=item.place_text,
+            place_type=item.place_type,
+            latitude=item.latitude,
+            longitude=item.longitude,
+            accuracy_meters=item.accuracy_meters,
+            radius_meters=item.radius_meters,
             version=item.version,
             updated_at=item.updated_at,
             reminders=[ReminderResponse.from_domain(reminder) for reminder in reminders or []],
@@ -182,6 +190,11 @@ class ItemCreateRequest(BaseModel):
     end_at: datetime | None = None
     due_at: datetime | None = None
     place_text: str | None = None
+    place_type: str | None = None
+    latitude: str | None = None
+    longitude: str | None = None
+    accuracy_meters: int | None = None
+    radius_meters: int = 100
 
 
 class ItemCreateResponse(BaseModel):
@@ -200,6 +213,11 @@ class ItemUpdateRequest(BaseModel):
     end_at: datetime | None = None
     due_at: datetime | None = None
     place_text: str | None = None
+    place_type: str | None = None
+    latitude: str | None = None
+    longitude: str | None = None
+    accuracy_meters: int | None = None
+    radius_meters: int | None = None
 
 
 class ItemMutationResponse(BaseModel):
@@ -216,7 +234,6 @@ class ReminderResponse(BaseModel):
     item_id: str
     trigger_type: str
     trigger_at: datetime | None
-    place_id: str | None
     priority: str
     delivery_channel: str
     status: str
@@ -231,12 +248,12 @@ class ReminderResponse(BaseModel):
 
     @classmethod
     def from_domain(cls, reminder: Reminder) -> ReminderResponse:
+        """从领域对象构造响应对象。"""
         return cls(
             id=reminder.id,
             item_id=reminder.item_id,
             trigger_type=reminder.trigger_type.value,
             trigger_at=reminder.trigger_at,
-            place_id=reminder.place_id,
             priority=reminder.priority.value,
             delivery_channel=reminder.delivery_channel.value,
             status=reminder.status.value,
@@ -257,7 +274,6 @@ class ReminderCreateRequest(BaseModel):
     item_id: str
     trigger_type: str
     trigger_at: datetime | None = None
-    place_id: str | None = None
     priority: str = "normal"
 
 
@@ -285,32 +301,6 @@ class ReminderActionResponse(BaseModel):
     events: list[EventResponse]
 
 
-class PlaceResponse(BaseModel):
-    """Skeleton place response."""
-
-    id: str
-    label: str
-    place_type: str
-    latitude: str | None
-    longitude: str | None
-    accuracy_meters: int | None
-    radius_meters: int
-    description: str | None
-
-    @classmethod
-    def from_domain(cls, place: Place) -> PlaceResponse:
-        return cls(
-            id=place.id,
-            label=place.label,
-            place_type=place.place_type,
-            latitude=place.latitude,
-            longitude=place.longitude,
-            accuracy_meters=place.accuracy_meters,
-            radius_meters=place.radius_meters,
-            description=place.description,
-        )
-
-
 class EventListResponse(BaseModel):
     """Cursor-based event list."""
 
@@ -318,71 +308,11 @@ class EventListResponse(BaseModel):
     events: list[EventResponse]
 
 
-class OutboxMessageResponse(BaseModel):
-    """Skeleton outbox response."""
-
-    id: str
-    event_id: str
-    channel: str
-    payload: dict[str, Any]
-    status: str
-    attempts: int
-    created_at: datetime
-
-    @classmethod
-    def from_domain(cls, message: OutboxMessage) -> OutboxMessageResponse:
-        return cls(
-            id=message.id,
-            event_id=message.event_id,
-            channel=message.channel,
-            payload=message.payload,
-            status=message.status,
-            attempts=message.attempts,
-            created_at=message.created_at,
-        )
-
-
 class AgendaResponse(BaseModel):
     """Single-panel agenda projection."""
 
     items: list[ItemResponse] = Field(default_factory=list)
     reminders: list[ReminderResponse] = Field(default_factory=list)
-
-
-class PlaceCreateRequest(BaseModel):
-    """Create a lightweight place skeleton record."""
-
-    label: str = Field(min_length=1)
-    place_type: str
-    radius_meters: int = 100
-    description: str | None = None
-    latitude: str | None = None
-    longitude: str | None = None
-    accuracy_meters: int | None = None
-
-
-class PlaceCreateResponse(BaseModel):
-    """Created place response."""
-
-    place: PlaceResponse
-
-
-class PlaceUpdateRequest(BaseModel):
-    """Update editable place fields."""
-
-    label: str | None = None
-    place_type: str | None = None
-    radius_meters: int | None = None
-    description: str | None = None
-    latitude: str | None = None
-    longitude: str | None = None
-    accuracy_meters: int | None = None
-
-
-class PlaceMutationResponse(BaseModel):
-    """Updated or deleted place response."""
-
-    place: PlaceResponse
 
 
 class RepeatRuleResponse(BaseModel):
@@ -396,6 +326,7 @@ class RepeatRuleResponse(BaseModel):
 
     @classmethod
     def from_domain(cls, repeat_rule: RepeatRule) -> RepeatRuleResponse:
+        """从领域对象构造响应对象。"""
         return cls(
             id=repeat_rule.id,
             pattern=repeat_rule.pattern,

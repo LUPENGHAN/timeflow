@@ -18,35 +18,46 @@ docker compose up --build
 ```
 
 健康检查：<http://127.0.0.1:8000/api/v1/health>
+Swagger：<http://127.0.0.1:8000/docs>
+
+## 语音服务
+
+文本命令入口为 `POST /api/v1/voice/commands`，音频入口为
+`POST /api/v1/voice/commands/audio`。外部服务均通过本地 `.env` 配置：
+
+```bash
+TIMEAPP_LLM_API_KEY=
+TIMEAPP_LLM_BASE_URL=https://api.openai.com/v1
+TIMEAPP_LLM_MODEL=gpt-4o-mini
+
+TIMEAPP_ASR_API_KEY=
+TIMEAPP_ASR_BASE_URL=https://api.openai.com/v1
+TIMEAPP_ASR_MODEL=whisper-1
+TIMEAPP_ASR_PROTOCOL=openai_transcription
+```
+
+`TIMEAPP_ASR_PROTOCOL` 支持标准 OpenAI multipart 转写接口的
+`openai_transcription`，以及通过 Chat Completions 传入 Base64 音频的
+`qwen_chat`。未配置 LLM 时自动使用本地关键词解析；未配置 ASR 时音频入口返回
+`503 asr_not_configured`。
 
 ## 目录结构
 
 ```text
 src/timeapp/
-├── agents/                 # 主 Agent 与五个子 Agent 的空目录边界
-│   ├── main_agent/
-│   ├── schedule_todo_agent/
-│   ├── task_breakdown_agent/
-│   ├── replanning_agent/
-│   ├── review_agent/
-│   └── feedback_agent/
-├── basic/                  # 手动业务、用户画像和 OCR/ASR 模块边界
-│   ├── identity/
-│   ├── user_profile/
-│   ├── ocr/
+├── ai/                     # AI 层：ASR 客户端和命令解析器
 │   ├── asr/
-│   └── usage_management/
-├── common/
-│   ├── data/               # 公共事实数据读写边界
-│   ├── llm/                # 统一模型调用与提示词管理边界
-│   ├── task_profile/       # 任务级画像管理边界
-│   ├── object_storage/     # 图片和音频对象存储边界
-│   └── system_logs/        # 系统日志与业务审计边界
+│   └── parser.py           # LLMCommandParser / MockCommandParser
 ├── api/                    # HTTP 路由聚合和基础设施探活
-└── core/                   # 配置、数据库连接和基础设施
+├── application/            # 编排：命令处理、确认门禁、事件产出
+├── capabilities/           # 能力包：calendar/todo/reminder 等
+├── context/                # Context & Policy：触发条件与投递策略
+├── core/                   # 配置、数据库连接和基础设施
+├── domain/                 # 稳定内核：Command/WriteRequest/DomainEvent 等
+└── infrastructure/         # SQLAlchemy 模型
 ```
 
-Agent 目录边界已经保留，具体实现将在数据库和接口设计完成后通过独立功能提交添加。消息推送按 Wiki 约束由前端实现。
+完整分层说明见 `docs/architecture.md`。
 
 ## 数据库迁移（Alembic）
 

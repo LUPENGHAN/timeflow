@@ -12,7 +12,7 @@ class TimeTrigger:
     """Active P0 trigger for due-at reminders."""
 
     def is_due(self, reminder: Reminder, now: datetime) -> bool:
-        """Return true when a time reminder is due."""
+        """判断提醒是否到期。"""
 
         return (
             reminder.trigger_type == ReminderTriggerType.TIME

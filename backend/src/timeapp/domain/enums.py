@@ -37,11 +37,8 @@ class WriteRequestStatus(StrEnum):
 class VoiceCommandStatus(StrEnum):
     """ASR and parser lifecycle for a voice command."""
 
-    RECEIVED = "received"
-    TRANSCRIBED = "transcribed"
     PARSED = "parsed"
     NEEDS_CLARIFICATION = "needs_clarification"
-    FAILED = "failed"
 
 
 class ItemType(StrEnum):
@@ -56,7 +53,6 @@ class ItemStatus(StrEnum):
 
     ACTIVE = "active"
     COMPLETED = "completed"
-    CANCELLED = "cancelled"
     DELETED = "deleted"
 
 

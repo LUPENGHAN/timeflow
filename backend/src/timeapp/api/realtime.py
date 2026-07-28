@@ -18,21 +18,22 @@ class RealtimeConnectionManager:
     """Track active WebSocket clients and broadcast domain events."""
 
     def __init__(self) -> None:
+        """初始化实例。"""
         self._connections: set[WebSocket] = set()
 
     async def connect(self, websocket: WebSocket) -> None:
-        """Accept and register a WebSocket connection."""
+        """处理RealtimeConnectionManager相关逻辑。"""
 
         await websocket.accept()
         self._connections.add(websocket)
 
     def disconnect(self, websocket: WebSocket) -> None:
-        """Remove a WebSocket connection if it is still registered."""
+        """关闭 WebSocket 连接。"""
 
         self._connections.discard(websocket)
 
     async def broadcast_events(self, events: list[DomainEvent]) -> None:
-        """Broadcast serialized domain events to every active WebSocket."""
+        """处理RealtimeConnectionManager相关逻辑。"""
 
         if not events or not self._connections:
             return
@@ -62,7 +63,7 @@ async def websocket_events(
     websocket: WebSocket,
     app: AppDependency,
 ) -> None:
-    """Provide connection.ready and cursor-based sync responses."""
+    """处理实例相关逻辑。"""
 
     await realtime_manager.connect(websocket)
     await websocket.send_json(

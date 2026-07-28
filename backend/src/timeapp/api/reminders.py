@@ -30,7 +30,7 @@ async def list_reminders(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> list[ReminderResponse]:
-    """Return reminders for the current user."""
+    """列出用户提醒。"""
 
     return [ReminderResponse.from_domain(reminder) for reminder in app.list_reminders(identity)]
 
@@ -41,7 +41,7 @@ async def create_reminder(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> ReminderCreateResponse:
-    """Create a reminder bound to an existing item."""
+    """创建提醒。"""
 
     try:
         trigger_type = ReminderTriggerType(request.trigger_type)
@@ -51,7 +51,6 @@ async def create_reminder(
             item_id=request.item_id,
             trigger_type=trigger_type,
             trigger_at=request.trigger_at,
-            place_id=request.place_id,
             priority=priority,
         )
     except ValueError as error:
@@ -79,7 +78,7 @@ async def apply_reminder_action(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> ReminderActionResponse:
-    """Apply local notification/reminder action feedback."""
+    """应用提醒动作。"""
 
     try:
         reminder, events = app.apply_reminder_action(

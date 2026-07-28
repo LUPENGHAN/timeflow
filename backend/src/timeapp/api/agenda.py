@@ -19,7 +19,7 @@ async def get_agenda(
     identity: IdentityDependency,
     app: AppDependency,
 ) -> AgendaResponse:
-    """Return a single-panel agenda projection for the current user."""
+    """获取agenda。"""
 
     items = app.list_items(identity)
     reminders = app.list_reminders(identity)
