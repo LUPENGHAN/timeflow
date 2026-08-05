@@ -5,9 +5,14 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { OverlayProvider } from '@/app/overlay/OverlayProvider';
 import { createReminderAlarmAdapter } from '@/app/integrations/reminderAlarmAdapter';
 import { createScheduleConflictNotifier } from '@/app/integrations/scheduleConflictNotifier';
+import { PowerSyncScheduleRepository } from '@/app/integrations/PowerSyncScheduleRepository';
 import { SessionProvider, useSession } from '@/app/session/SessionProvider';
 import type { DeviceIdStore } from '@/infrastructure/storage/deviceIdStore';
-import { ScheduleProvider } from '@/features/schedule';
+import {
+  PowerSyncDevSync,
+  usePowerSyncDatabase,
+} from '@/infrastructure/powersync/PowerSyncDevSync';
+import { ScheduleProvider, type ScheduleTransport } from '@/features/schedule';
 import { AppDialogProvider, useAppDialog } from '@/shared/components/AppDialogProvider';
 
 import { providerStyles as styles } from './providers.styles';
@@ -16,14 +21,21 @@ import { providerStyles as styles } from './providers.styles';
 function ScheduleSessionBridge({ children }: { children: ReactNode }) {
   const { client, connectionStatus, userId, sessionEpoch } = useSession();
   const { showNotice } = useAppDialog();
+  const powerSyncDatabase = usePowerSyncDatabase();
   const alarmAdapter = useMemo(() => createReminderAlarmAdapter(showNotice), [showNotice]);
   const notifyConflicts = useMemo(() => createScheduleConflictNotifier(showNotice), [showNotice]);
+  const repositoryFactory = useMemo(() => {
+    if (!powerSyncDatabase || !userId) return undefined;
+    return (transport: ScheduleTransport) =>
+      new PowerSyncScheduleRepository(powerSyncDatabase, transport, userId);
+  }, [powerSyncDatabase, userId]);
   return (
     <ScheduleProvider
       alarmAdapter={alarmAdapter}
       client={client}
       connectionStatus={connectionStatus}
       notifyConflicts={notifyConflicts}
+      repositoryFactory={repositoryFactory}
       userId={userId}
       sessionEpoch={sessionEpoch}
     >
@@ -41,11 +53,13 @@ export function AppProviders({
 }) {
   const { width } = useWindowDimensions();
   const tree = (
-    <SessionProvider deviceIdStore={deviceIdStore}>
-      <ScheduleSessionBridge>
-        <OverlayProvider>{children}</OverlayProvider>
-      </ScheduleSessionBridge>
-    </SessionProvider>
+    <PowerSyncDevSync>
+      <SessionProvider deviceIdStore={deviceIdStore}>
+        <ScheduleSessionBridge>
+          <OverlayProvider>{children}</OverlayProvider>
+        </ScheduleSessionBridge>
+      </SessionProvider>
+    </PowerSyncDevSync>
   );
 
   if (Platform.OS !== 'web') {

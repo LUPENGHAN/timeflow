@@ -10,6 +10,9 @@
   "dependencies": {
     "@baidumap/jsapi-loader": "^1.0.0",
     "@expo/metro-runtime": "~57.0.7",
+    "@op-engineering/op-sqlite": "^17.1.3",
+    "@powersync/common": "^2.0.0",
+    "@powersync/react-native": "^2.0.0",
     "expo": "~57.0.8",
     "expo-file-system": "~57.0.1",
     "expo-image-picker": "~57.0.6",
@@ -76,7 +79,7 @@
       "/_backup_"
     ],
     "transformIgnorePatterns": [
-      "/node_modules/(?!(.pnpm|react-native|@react-native|@react-native-community|expo|@expo|@expo-google-fonts|react-navigation|@react-navigation|@sentry/react-native|native-base|standard-navigation|lucide-react-native|react-native-svg|react-native-calendars|react-native-swipe-gestures))"
+      "/node_modules/(?!(.pnpm|react-native|@react-native|@react-native-community|expo|@expo|@expo-google-fonts|@powersync|@op-engineering|react-navigation|@react-navigation|@sentry/react-native|native-base|standard-navigation|lucide-react-native|react-native-svg|react-native-calendars|react-native-swipe-gestures))"
     ],
     "collectCoverageFrom": [
       "src/**/*.{ts,tsx}",

@@ -20,6 +20,7 @@ import type { ScheduleConflictNotifier } from '../application/ScheduleNotificati
 import { ScheduleService } from '../application/ScheduleService';
 import { ScheduleCache } from '../data/ScheduleCache';
 import type { ScheduleTransport } from '../data/ScheduleTransport';
+import type { ScheduleRepositoryPort } from '../data/ScheduleRepositoryPort';
 import { WsScheduleRepository } from '../data/WsScheduleRepository';
 
 type ScheduleMutationState = {
@@ -63,6 +64,9 @@ export type ScheduleProviderProps = {
   connectionStatus: ConnectionStatus;
   /** App-owned feedback for server-reported schedule conflicts. */
   notifyConflicts?: ScheduleConflictNotifier;
+  repositoryFactory?: (
+    client: ScheduleTransport,
+  ) => ScheduleRepositoryPort & { dispose?: () => void };
   userId: string | null;
   /** 每次 session.ready 递增；用于重连后 resync。 */
   sessionEpoch: number;
@@ -74,6 +78,7 @@ export function ScheduleProvider({
   client,
   connectionStatus,
   notifyConflicts,
+  repositoryFactory,
   userId,
   sessionEpoch,
 }: ScheduleProviderProps) {
@@ -83,7 +88,9 @@ export function ScheduleProvider({
   const service = useMemo(() => {
     if (!client) return null;
     const cache = new ScheduleCache();
-    const repository = new WsScheduleRepository(client);
+    const repository = repositoryFactory
+      ? repositoryFactory(client)
+      : new WsScheduleRepository(client);
     return new ScheduleService({
       alarmAdapter,
       repository,
@@ -94,7 +101,7 @@ export function ScheduleProvider({
       },
       notifyConflicts,
     });
-  }, [alarmAdapter, client, notifyConflicts, userId]);
+  }, [alarmAdapter, client, notifyConflicts, repositoryFactory, userId]);
 
   const subscribeToItems = useCallback(
     (onStoreChange: () => void) => {

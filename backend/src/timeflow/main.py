@@ -24,6 +24,11 @@ from timeflow.gateway.aliyun_asr import AliyunASRClient
 from timeflow.gateway.aliyun_tts import AliyunTTSClient
 from timeflow.gateway.openai_llm import OpenAILLMClient
 from timeflow.infrastructure.settings import get_settings
+from timeflow.infrastructure.sync.dev_push import (
+    DevPowerSyncPushService,
+    DevSyncPushRequest,
+    DevSyncPushResponse,
+)
 from timeflow.infrastructure.websocket.connection_manager import ConnectionManager
 from timeflow.infrastructure.websocket.endpoint import run_websocket_session
 from timeflow.infrastructure.websocket.handlers.location import LocationWebSocketHandlers
@@ -187,6 +192,14 @@ def create_app() -> FastAPI:
 
     application = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
     application.state.reminder_audio_sender = audio_sender
+
+    if settings.environment in {"development", "test"}:
+        dev_sync_service = DevPowerSyncPushService(session_factory)
+
+        @application.post("/api/v1/sync/push", response_model=DevSyncPushResponse)
+        def dev_sync_push(request: DevSyncPushRequest) -> DevSyncPushResponse:
+            """Apply PowerSync CRUD in the local development environment only."""
+            return dev_sync_service.push(request)
 
     @application.get("/api/v1/health")
     def health() -> dict[str, str]:
