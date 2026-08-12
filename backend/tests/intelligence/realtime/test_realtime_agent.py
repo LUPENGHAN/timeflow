@@ -20,6 +20,7 @@ class _Stream:
     """Identifiers of the audio stream a turn answers."""
 
     account_id: str = "acc_test"
+    timezone: str = "Asia/Shanghai"
     session_id: str = "ws_session_test"
     stream_id: str = "stream_test"
     conversation_id: str = "conversation_test"
@@ -262,7 +263,7 @@ def test_the_instructions_are_applied_when_the_session_opens() -> None:
         factory = ScriptedFactory(ScriptedSession([]))
 
         await RealtimeAgent(
-            factory, RecordingSink(), instructions=lambda: "你是日程助手"
+            factory, RecordingSink(), instructions=lambda _timezone: "你是日程助手"
         ).handle_audio(_chunks(b"a"), _Stream())
 
         assert factory.instructions == "你是日程助手"

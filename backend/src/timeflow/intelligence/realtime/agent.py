@@ -83,8 +83,8 @@ class RealtimeAgent:
         sessions: RealtimeSessionFactory,
         result_sink: ResultSink,
         *,
-        tools_factory: Callable[[str], ToolBox] | None = None,
-        instructions: Callable[[], str] | None = None,
+        tools_factory: Callable[[str, str], ToolBox] | None = None,
+        instructions: Callable[[str], str] | None = None,
         audio_id_factory: Callable[[], str] | None = None,
         reply_id_factory: Callable[[], str] | None = None,
         message_id_factory: Callable[[], str] | None = None,
@@ -96,7 +96,7 @@ class RealtimeAgent:
         self._result_sink = result_sink
         self._tools_factory = tools_factory
         # Called per session, so a long-running server keeps saying what day it is now.
-        self._instructions = instructions or (lambda: "")
+        self._instructions = instructions or (lambda _timezone: "")
         self._audio_id_factory = audio_id_factory or new_audio_id
         self._reply_id_factory = reply_id_factory or new_reply_id
         self._message_id_factory = message_id_factory or new_message_id
@@ -114,7 +114,7 @@ class RealtimeAgent:
         self._forget_idle_locks()
 
         async with self._lock_for(key):
-            held = await self._session_for(key)
+            held = await self._session_for(key, stream.timezone)
             if held is None:
                 return
 
@@ -156,17 +156,24 @@ class RealtimeAgent:
                 else:
                     await self._discard(key)
 
-    async def _session_for(self, key: tuple[str, str]) -> _Held | None:
-        """Return the conversation's open session, opening one when there is none."""
+    async def _session_for(self, key: tuple[str, str], timezone: str) -> _Held | None:
+        """Return the conversation's open session, opening one when there is none.
+
+        The timezone only matters for a session opened fresh here -- a held session keeps
+        whatever zone was live when it opened. A conversation crossing zones mid-flight is
+        not handled; it is replaced the ordinary way once its budget runs out.
+        """
         held = self._held.get(key)
         if held is not None:
             return held
 
         account_id, _ = key
-        tools = self._tools_factory(account_id) if self._tools_factory is not None else None
+        tools = (
+            self._tools_factory(account_id, timezone) if self._tools_factory is not None else None
+        )
         schemas = tools.tools() if tools is not None else []
         try:
-            session = await self._sessions.open(self._instructions(), schemas)
+            session = await self._sessions.open(self._instructions(timezone), schemas)
         except Exception:
             logger.exception("could not open a realtime session")
             return None

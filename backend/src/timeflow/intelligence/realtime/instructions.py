@@ -4,8 +4,6 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-LOCAL = ZoneInfo("Asia/Shanghai")
-
 _WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 
 _ROLE = """你是 TimeFlow 的日程助手，帮用户用说话的方式管理日程和提醒。
@@ -53,12 +51,13 @@ _ROLE = """你是 TimeFlow 的日程助手，帮用户用说话的方式管理�
 """
 
 
-def build_instructions(now: Callable[[], datetime] | None = None) -> str:
-    """Return the instructions with the current local time stated at the top."""
+def build_instructions(timezone: str, now: Callable[[], datetime] | None = None) -> str:
+    """Return the instructions with the current time in the client's zone stated at the top."""
     clock = now or (lambda: datetime.now(UTC))
-    local = clock().astimezone(LOCAL)
+    tz = ZoneInfo(timezone)
+    local = clock().astimezone(tz)
     return (
         f"当前时间：{local.strftime('%Y年%m月%d日')} {_WEEKDAYS[local.weekday()]} "
-        f"{local.strftime('%H:%M')}（时区 Asia/Shanghai）。"
+        f"{local.strftime('%H:%M')}（时区 {timezone}）。"
         "用户说的今天、明天、这周都以此为基准。\n\n" + _ROLE
     )

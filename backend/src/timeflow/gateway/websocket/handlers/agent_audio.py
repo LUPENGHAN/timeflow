@@ -12,6 +12,7 @@ class _StreamIdentity:
     """Identifiers lifted out of a stream context for the agent."""
 
     account_id: str
+    timezone: str
     session_id: str
     stream_id: str
     conversation_id: str
@@ -34,6 +35,7 @@ def _identity_of(stream: StreamContext) -> _StreamIdentity:
     """Lift the identifiers the agent needs out of the transport's context."""
     return _StreamIdentity(
         account_id=stream.account_id,
+        timezone=stream.timezone,
         session_id=stream.session.session_id,
         stream_id=stream.stream_id,
         conversation_id=stream.conversation_id,

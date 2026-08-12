@@ -9,6 +9,7 @@ from uuid import uuid4
 from pydantic import ValidationError
 
 from timeflow.business.auth import AccessTokenService
+from timeflow.business.calendar.recurrence import InvalidTimezoneKeyError, get_schedule_timezone
 from timeflow.gateway.websocket.envelope import (
     ERROR_MALFORMED_MESSAGE,
     ERROR_UNAUTHENTICATED,
@@ -20,6 +21,8 @@ from timeflow.gateway.websocket.messages.session import (
     SessionReadyPayload,
 )
 from timeflow.gateway.websocket.ports import SessionContext
+
+DEFAULT_TIMEZONE = "Asia/Shanghai"
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +99,7 @@ class SessionHandshake:
             device_id=hello.payload.device_id,
             latitude=hello.payload.latitude,
             longitude=hello.payload.longitude,
+            timezone=_resolved_timezone(hello.payload.timezone),
         )
         reply = SessionReady(
             request_id=hello.request_id,
@@ -118,3 +122,17 @@ class SessionHandshake:
     def _now() -> datetime:
         """Return the current UTC time."""
         return datetime.now(UTC)
+
+
+def _resolved_timezone(candidate: str | None) -> str:
+    """Use the client's IANA timezone when it is valid, the deployment default otherwise.
+
+    Resolved once here so every layer downstream can trust the string without re-validating.
+    """
+    if candidate is None:
+        return DEFAULT_TIMEZONE
+    try:
+        get_schedule_timezone(candidate)
+    except InvalidTimezoneKeyError:
+        return DEFAULT_TIMEZONE
+    return candidate

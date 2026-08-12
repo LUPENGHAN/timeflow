@@ -28,6 +28,7 @@ class _Stream:
     """Identifiers of the audio stream a turn answers."""
 
     account_id: str = "acc_test"
+    timezone: str = "Asia/Shanghai"
     session_id: str = "ws_session_test"
     stream_id: str = "stream_test"
     conversation_id: str = "conversation_test"
@@ -189,7 +190,7 @@ def test_a_committed_tool_call_answers_the_client_and_the_model() -> None:
             [("tool_requested", ("call_1", "schedule_create", {"title": "开会"}))]
         )
 
-        await RealtimeAgent(factory, sink, tools_factory=lambda _: tools).handle_audio(  # type: ignore[arg-type]
+        await RealtimeAgent(factory, sink, tools_factory=lambda _account, _tz: tools).handle_audio(  # type: ignore[arg-type]
             _chunks(b"a" * 3200), _Stream()
         )
 
@@ -220,7 +221,7 @@ def test_a_mutation_result_reaches_the_client_flat_not_wrapped_in_the_outcome() 
             [("tool_requested", ("call_1", "schedule_create", {"title": "开会"}))]
         )
 
-        await RealtimeAgent(factory, sink, tools_factory=lambda _: tools).handle_audio(  # type: ignore[arg-type]
+        await RealtimeAgent(factory, sink, tools_factory=lambda _account, _tz: tools).handle_audio(  # type: ignore[arg-type]
             _chunks(b"a" * 3200), _Stream()
         )
 
@@ -245,7 +246,7 @@ def test_a_query_result_carries_the_matches_as_schedules_not_schedule() -> None:
         sink = RecordingSink()
         factory = CountingFactory([("tool_requested", ("call_1", "schedule_query", {}))])
 
-        await RealtimeAgent(factory, sink, tools_factory=lambda _: tools).handle_audio(  # type: ignore[arg-type]
+        await RealtimeAgent(factory, sink, tools_factory=lambda _account, _tz: tools).handle_audio(  # type: ignore[arg-type]
             _chunks(b"a" * 3200), _Stream()
         )
 
@@ -267,7 +268,7 @@ def test_a_refused_tool_call_reaches_the_model_and_not_the_client() -> None:
             [("tool_requested", ("call_1", "schedule_create", {"title": "开会"}))]
         )
 
-        await RealtimeAgent(factory, sink, tools_factory=lambda _: tools).handle_audio(  # type: ignore[arg-type]
+        await RealtimeAgent(factory, sink, tools_factory=lambda _account, _tz: tools).handle_audio(  # type: ignore[arg-type]
             _chunks(b"a" * 3200), _Stream()
         )
 
@@ -297,7 +298,7 @@ def test_a_question_from_a_tool_is_pushed_to_the_client() -> None:
             [("tool_requested", ("call_1", "request_user_input", {})), ("audio", (b"pcm",))]
         )
 
-        await RealtimeAgent(factory, sink, tools_factory=lambda _: tools).handle_audio(  # type: ignore[arg-type]
+        await RealtimeAgent(factory, sink, tools_factory=lambda _account, _tz: tools).handle_audio(  # type: ignore[arg-type]
             _chunks(b"a" * 3200), _Stream()
         )
 

@@ -15,6 +15,9 @@ class SessionContext:
     # Accepted but not acted on yet -- no geocoding or geofencing consumes these.
     latitude: float | None = None
     longitude: float | None = None
+    # Resolved at handshake time: the client's IANA zone when it sent a valid one,
+    # the deployment default otherwise. Never left unset.
+    timezone: str = "Asia/Shanghai"
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +48,11 @@ class StreamContext:
     def session_id(self) -> str:
         """Session this stream belongs to."""
         return self.session.session_id
+
+    @property
+    def timezone(self) -> str:
+        """IANA zone resolved for this session."""
+        return self.session.timezone
 
 
 class AudioSink(Protocol):

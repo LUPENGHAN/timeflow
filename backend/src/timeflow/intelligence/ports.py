@@ -14,6 +14,11 @@ class StreamInfo(Protocol):
         ...
 
     @property
+    def timezone(self) -> str:
+        """IANA zone the session resolved, client-reported or the deployment default."""
+        ...
+
+    @property
     def session_id(self) -> str:
         """Session the stream belongs to."""
         ...
