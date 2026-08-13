@@ -33,6 +33,11 @@ TTS_ENVIRONMENT_VARIABLES = (
     "TIMEFLOW_ALIYUN_TTS_CONNECT_TIMEOUT_SECONDS",
     "TIMEFLOW_ALIYUN_TTS_TASK_TIMEOUT_SECONDS",
 )
+AUDIO_ENVIRONMENT_VARIABLES = (
+    "TIMEFLOW_ALIYUN_AUDIO_TURN_DETECTION",
+    "TIMEFLOW_ALIYUN_AUDIO_VAD_THRESHOLD",
+    "TIMEFLOW_ALIYUN_AUDIO_VAD_SILENCE_DURATION_MS",
+)
 JWT_ENVIRONMENT_VARIABLES = (
     "TIMEFLOW_JWT_SECRET",
     "TIMEFLOW_JWT_ISSUER",
@@ -59,11 +64,18 @@ def clear_tts_environment(monkeypatch: MonkeyPatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
+def clear_audio_environment(monkeypatch: MonkeyPatch) -> None:
+    """Remove end-to-end audio turn-detection variables so assertions are deterministic."""
+    for name in AUDIO_ENVIRONMENT_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+
+
 def clear_model_environment(monkeypatch: MonkeyPatch) -> None:
     """Remove model-specific variables before settings assertions."""
     clear_asr_environment(monkeypatch)
     clear_llm_environment(monkeypatch)
     clear_tts_environment(monkeypatch)
+    clear_audio_environment(monkeypatch)
     for name in JWT_ENVIRONMENT_VARIABLES:
         monkeypatch.delenv(name, raising=False)
 
@@ -156,6 +168,34 @@ def test_settings_use_qwen_tts_defaults(
     assert settings.aliyun_tts_voice == "longanhuan_v3.6"
     assert settings.aliyun_tts_connect_timeout_seconds == 10.0
     assert settings.aliyun_tts_task_timeout_seconds == 30.0
+
+
+def test_settings_use_qwen_audio_turn_detection_defaults(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    clear_model_environment(monkeypatch)
+
+    settings = Settings.from_environment(tmp_path / "missing.env")
+
+    assert settings.aliyun_audio_turn_detection == "smart_turn"
+    assert settings.aliyun_audio_vad_threshold == 0.5
+    assert settings.aliyun_audio_vad_silence_duration_ms == 800
+
+
+def test_settings_convert_audio_turn_detection_environment_values(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    clear_model_environment(monkeypatch)
+    monkeypatch.setenv("TIMEFLOW_ALIYUN_AUDIO_TURN_DETECTION", "server_vad")
+    monkeypatch.setenv("TIMEFLOW_ALIYUN_AUDIO_VAD_THRESHOLD", "0.1")
+    monkeypatch.setenv("TIMEFLOW_ALIYUN_AUDIO_VAD_SILENCE_DURATION_MS", "900")
+
+    settings = Settings.from_environment()
+
+    assert settings.aliyun_audio_turn_detection == "server_vad"
+    assert settings.aliyun_audio_vad_threshold == 0.1
+    assert settings.aliyun_audio_vad_silence_duration_ms == 900
 
 
 def test_settings_allow_empty_jwt_secret_with_v1_defaults(
@@ -311,6 +351,21 @@ def test_settings_convert_tts_environment_values(monkeypatch: MonkeyPatch) -> No
             "TIMEFLOW_ALIYUN_TTS_TASK_TIMEOUT_SECONDS",
             "-1",
             "TTS timeouts must be greater than zero",
+        ),
+        (
+            "TIMEFLOW_ALIYUN_AUDIO_TURN_DETECTION",
+            "push_to_talk",
+            "TIMEFLOW_ALIYUN_AUDIO_TURN_DETECTION must be 'smart_turn' or 'server_vad'",
+        ),
+        (
+            "TIMEFLOW_ALIYUN_AUDIO_VAD_THRESHOLD",
+            "1.5",
+            "TIMEFLOW_ALIYUN_AUDIO_VAD_THRESHOLD must be between -1 and 1",
+        ),
+        (
+            "TIMEFLOW_ALIYUN_AUDIO_VAD_SILENCE_DURATION_MS",
+            "100",
+            "TIMEFLOW_ALIYUN_AUDIO_VAD_SILENCE_DURATION_MS must be between 200 and 6000",
         ),
     ],
 )
