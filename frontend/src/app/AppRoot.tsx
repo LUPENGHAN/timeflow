@@ -1,19 +1,29 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { accessAuth } from '../api/auth';
 import type { AuthAccessResponse } from '../contracts/auth';
+import { AssistantConversationService } from '../features/assistant/application/AssistantConversationService';
+import { ExpoAudioCapture } from '../features/assistant/data/audio/ExpoAudioCapture';
+import { ExpoAudioPlayback } from '../features/assistant/data/audio/ExpoAudioPlayback';
+import { LocalScheduleWriter } from '../features/assistant/data/local/LocalScheduleWriter';
+import { WebSocketVoiceTransport } from '../features/assistant/data/websocket/WebSocketVoiceTransport';
 import { SqliteScheduleClientService } from '../features/schedule/application';
 import { ScheduleLocalRepository } from '../features/schedule/data';
-import { ScheduleCalendarScreen } from '../features/schedule/presentation/ScheduleCalendarScreen';
 import { openTimeflowDatabase } from '../infrastructure/database';
+import { ExpoLocationProvider } from '../infrastructure/location/ExpoLocationProvider';
+import { HomeScreen } from '../screens/HomeScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { colors, spacing } from '../shared/ui/theme';
 import { AppProviders } from './AppProviders';
 
+const WS_URL = (process.env.EXPO_PUBLIC_WS_URL ?? 'ws://127.0.0.1:8000/ws').replace(/\/$/, '');
+
 export function AppRoot() {
   const [session, setSession] = useState<AuthAccessResponse>();
-  const [scheduleService, setScheduleService] = useState<SqliteScheduleClientService>();
+  // 登录流程目前不带 device_id；先按会话生成一个稳定 id，持久化设备标识不在本轮范围。
+  const [deviceId] = useState(() => `device-${Math.random().toString(36).slice(2)}`);
+  const [repository, setRepository] = useState<ScheduleLocalRepository>();
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [databaseRetryToken, setDatabaseRetryToken] = useState(0);
 
@@ -23,9 +33,7 @@ export function AppRoot() {
     openTimeflowDatabase()
       .then((database) => {
         if (active) {
-          setScheduleService(
-            new SqliteScheduleClientService(new ScheduleLocalRepository(database)),
-          );
+          setRepository(new ScheduleLocalRepository(database));
         }
       })
       .catch(() => {
@@ -37,18 +45,40 @@ export function AppRoot() {
   }, [databaseRetryToken, session]);
 
   const retryDatabase = useCallback(() => {
-    setScheduleService(undefined);
+    setRepository(undefined);
     setDatabaseError(null);
     setDatabaseRetryToken((value) => value + 1);
   }, []);
 
+  const scheduleService = useMemo(
+    () => (repository ? new SqliteScheduleClientService(repository) : undefined),
+    [repository],
+  );
+
+  const assistantApplication = useMemo(() => {
+    if (!session || !repository) {
+      return null;
+    }
+    return new AssistantConversationService(
+      { accessToken: session.access_token, accountId: session.account_id, deviceId, wsUrl: WS_URL },
+      {
+        capture: new ExpoAudioCapture(),
+        localScheduleWriter: new LocalScheduleWriter(repository),
+        location: new ExpoLocationProvider(),
+        playback: new ExpoAudioPlayback(),
+        transport: new WebSocketVoiceTransport(),
+      },
+    );
+  }, [session, deviceId, repository]);
+
   return (
     <AppProviders>
       {session ? (
-        scheduleService ? (
-          <ScheduleCalendarScreen
+        scheduleService && assistantApplication ? (
+          <HomeScreen
             accountId={session.account_id}
-            service={scheduleService}
+            application={assistantApplication}
+            scheduleService={scheduleService}
             timezone={Intl.DateTimeFormat().resolvedOptions().timeZone}
           />
         ) : (
@@ -78,7 +108,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: spacing.xl,
   },
-  title: { color: colors.text, fontSize: 22, fontWeight: '700' },
   retry: {
     backgroundColor: colors.text,
     borderRadius: 8,
@@ -87,4 +116,5 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   retryText: { color: colors.onPrimary, fontWeight: '700' },
+  title: { color: colors.text, fontSize: 22, fontWeight: '700' },
 });
