@@ -21,6 +21,7 @@ const WS_URL = (process.env.EXPO_PUBLIC_WS_URL ?? 'ws://127.0.0.1:8000/ws').repl
 
 export function AppRoot() {
   const [session, setSession] = useState<AuthAccessResponse>();
+  const [username, setUsername] = useState<string>();
   // 登录流程目前不带 device_id；先按会话生成一个稳定 id，持久化设备标识不在本轮范围。
   const [deviceId] = useState(() => `device-${Math.random().toString(36).slice(2)}`);
   const [repository, setRepository] = useState<ScheduleLocalRepository>();
@@ -80,6 +81,7 @@ export function AppRoot() {
             application={assistantApplication}
             scheduleService={scheduleService}
             timezone={Intl.DateTimeFormat().resolvedOptions().timeZone}
+            username={username}
           />
         ) : (
           <View style={styles.authenticatedScreen}>
@@ -93,7 +95,13 @@ export function AppRoot() {
           </View>
         )
       ) : (
-        <LoginScreen authAccess={accessAuth} onAuthenticated={setSession} />
+        <LoginScreen
+          authAccess={accessAuth}
+          onAuthenticated={(response, submittedUsername) => {
+            setSession(response);
+            setUsername(submittedUsername);
+          }}
+        />
       )}
     </AppProviders>
   );

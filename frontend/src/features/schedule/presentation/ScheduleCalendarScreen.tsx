@@ -19,12 +19,15 @@ export function ScheduleCalendarScreen({
   accountId,
   timezone,
   refreshSignal,
+  username,
 }: {
   service: ScheduleCalendarReadService;
   accountId: string;
   timezone: string;
   /** 外部触发刷新用（比如语音写完一条日程）；变化即重取，不用管具体数值。 */
   refreshSignal?: number;
+  /** 头部展示用；没有就退回显示 accountId（比如测试里没传这个 prop）。 */
+  username?: string;
 }) {
   const calendar = useScheduleCalendar(service, accountId, timezone, undefined, refreshSignal);
   const [selectedOccurrence, setSelectedOccurrence] = useState<ScheduleOccurrenceView | null>(null);
@@ -37,7 +40,7 @@ export function ScheduleCalendarScreen({
           <Text style={styles.eyebrow}>我的日程</Text>
           <Text style={styles.title}>{selectedLabel}</Text>
         </View>
-        <Text style={styles.account}>{accountId}</Text>
+        <Text style={styles.account}>{username ?? accountId}</Text>
       </View>
       <MonthCalendar
         month={calendar.visibleMonth}

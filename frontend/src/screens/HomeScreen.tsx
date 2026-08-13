@@ -12,10 +12,18 @@ interface HomeScreenProps {
   scheduleService: ScheduleCalendarReadService;
   accountId: string;
   timezone: string;
+  /** 登录时填写的用户名；日历头部展示用，没有就退回显示 accountId。 */
+  username?: string;
 }
 
 /** 登录后的主屏：日历 + 语音入口，共用同一个 AssistantConversationService 实例。 */
-export function HomeScreen({ application, scheduleService, accountId, timezone }: HomeScreenProps) {
+export function HomeScreen({
+  application,
+  scheduleService,
+  accountId,
+  timezone,
+  username,
+}: HomeScreenProps) {
   const { lastAppliedCommand } = useAssistantConversation(application);
   const [trackedCommand, setTrackedCommand] = useState(lastAppliedCommand);
   const [refreshSignal, setRefreshSignal] = useState(0);
@@ -38,6 +46,7 @@ export function HomeScreen({ application, scheduleService, accountId, timezone }
         refreshSignal={refreshSignal}
         service={scheduleService}
         timezone={timezone}
+        username={username}
       />
       <AssistantVoiceOverlay application={application} />
     </View>

@@ -13,7 +13,7 @@ type FormErrors = Partial<Record<AuthField, string>>;
 
 interface AuthAccessFormOptions {
   authAccess: AuthAccess;
-  onAuthenticated?: (response: AuthAccessResponse) => void;
+  onAuthenticated?: (response: AuthAccessResponse, username: string) => void;
 }
 
 const INITIAL_VALUES: AuthAccessRequest = { password: '', username: '' };
@@ -59,7 +59,7 @@ export function useAuthAccessForm({ authAccess, onAuthenticated }: AuthAccessFor
     setIsSubmitting(true);
     try {
       const response = await authAccess(request);
-      onAuthenticated?.(response);
+      onAuthenticated?.(response, request.username);
     } catch (error) {
       setSubmitError(getSubmitErrorMessage(error));
     } finally {

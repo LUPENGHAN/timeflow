@@ -18,7 +18,7 @@ import { colors, spacing } from '../shared/ui/theme';
 
 interface LoginScreenProps {
   authAccess: AuthAccess;
-  onAuthenticated?: (response: AuthAccessResponse) => void;
+  onAuthenticated?: (response: AuthAccessResponse, username: string) => void;
 }
 
 type FocusedField = 'username' | 'password' | null;

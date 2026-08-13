@@ -50,7 +50,7 @@ describe('LoginScreen', () => {
         username: 'timeflow_user',
         password: 'password123',
       });
-      expect(onAuthenticated).toHaveBeenCalledWith(tokenResponse);
+      expect(onAuthenticated).toHaveBeenCalledWith(tokenResponse, 'timeflow_user');
     });
   });
 

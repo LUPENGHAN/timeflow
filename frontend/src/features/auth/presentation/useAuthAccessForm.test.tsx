@@ -40,7 +40,7 @@ describe('useAuthAccessForm', () => {
       password: 'password123',
       username: 'timeflow_user',
     });
-    expect(onAuthenticated).toHaveBeenCalledWith(tokenResponse);
+    expect(onAuthenticated).toHaveBeenCalledWith(tokenResponse, 'timeflow_user');
   });
 
   it('submits even when no authenticated listener is registered', async () => {
