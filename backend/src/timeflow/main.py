@@ -106,6 +106,7 @@ def create_app(
     voice_streams = VoiceStreamHandlers(
         audio_sink,
         max_audio_duration_ms=settings.ws_max_audio_duration_ms,
+        max_continuous_audio_duration_ms=settings.ws_max_continuous_audio_duration_ms,
         queue_max_chunks=settings.ws_audio_queue_max_chunks,
     )
     router = MessageRouter()
@@ -198,6 +199,9 @@ def _build_realtime_agent(
                     model=settings.aliyun_audio_model,
                     region=settings.aliyun_audio_region,
                     voice=settings.aliyun_audio_voice,
+                    turn_detection=settings.aliyun_audio_turn_detection,
+                    vad_threshold=settings.aliyun_audio_vad_threshold,
+                    vad_silence_duration_ms=settings.aliyun_audio_vad_silence_duration_ms,
                 )
             ),
             result_sink,

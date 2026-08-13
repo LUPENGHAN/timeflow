@@ -29,6 +29,7 @@ class _Stream:
 
     account_id: str = "acc_test"
     timezone: str = "Asia/Shanghai"
+    voice_mode: str = "push_to_talk"
     session_id: str = "ws_session_test"
     stream_id: str = "stream_test"
     conversation_id: str = "conversation_test"
@@ -60,6 +61,9 @@ class RecordingSink:
         async for chunk in chunks:
             self.calls.append(("audio", chunk))
         self.calls.append(("audio_end", reply.audio_id))
+
+    async def deliver_canceled(self, canceled: Any, stream: Any) -> None:
+        self.calls.append(("canceled", canceled))
 
     def kinds(self) -> list[str]:
         return [kind for kind, _ in self.calls]
@@ -99,7 +103,9 @@ class CountingFactory:
         self.script = script or []
         self.opened: list[ScriptedSession] = []
 
-    async def open(self, instructions: str, tools: list[dict[str, Any]]) -> ScriptedSession:
+    async def open(
+        self, instructions: str, tools: list[dict[str, Any]], voice_mode: str
+    ) -> ScriptedSession:
         self.opened.append(ScriptedSession(list(self.script)))
         return self.opened[-1]
 

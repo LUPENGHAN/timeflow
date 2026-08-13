@@ -104,7 +104,9 @@ class OneSessionFactory:
         self._session = session
         self.tools: list[dict[str, Any]] = []
 
-    async def open(self, instructions: str, tools: list[dict[str, Any]]) -> ToolCallingSession:
+    async def open(
+        self, instructions: str, tools: list[dict[str, Any]], voice_mode: str
+    ) -> ToolCallingSession:
         """Record the registered tools and return the scripted session."""
         self.tools = tools
         return self._session

@@ -21,6 +21,7 @@ class _Stream:
 
     account_id: str = "acc_test"
     timezone: str = "Asia/Shanghai"
+    voice_mode: str = "push_to_talk"
     session_id: str = "ws_session_test"
     stream_id: str = "stream_test"
     conversation_id: str = "conversation_test"
@@ -57,6 +58,10 @@ class RecordingSink:
         async for chunk in chunks:
             self.calls.append(("audio", chunk))
         self.calls.append(("audio_end", reply.audio_id))
+
+    async def deliver_canceled(self, canceled: Any, stream: Any) -> None:
+        """Record that a reply was cut short."""
+        self.calls.append(("canceled", canceled))
 
     def kinds(self) -> list[str]:
         """Return just the kind of each recorded call."""
@@ -104,7 +109,9 @@ class ScriptedFactory:
         self._session = session
         self.instructions: str | None = None
 
-    async def open(self, instructions: str, tools: list[dict[str, Any]]) -> ScriptedSession:
+    async def open(
+        self, instructions: str, tools: list[dict[str, Any]], voice_mode: str
+    ) -> ScriptedSession:
         """Record the configuration and return the scripted session."""
         self.instructions = instructions
         return self._session
@@ -113,7 +120,9 @@ class ScriptedFactory:
 class FailingFactory:
     """A factory that cannot reach the model."""
 
-    async def open(self, instructions: str, tools: list[dict[str, Any]]) -> ScriptedSession:
+    async def open(
+        self, instructions: str, tools: list[dict[str, Any]], voice_mode: str
+    ) -> ScriptedSession:
         """Fail as an unreachable model would."""
         raise ConnectionRefusedError
 
