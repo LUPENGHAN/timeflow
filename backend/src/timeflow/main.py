@@ -6,6 +6,11 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket
 from sqlalchemy import Engine
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 from sqlalchemy.orm import Session, sessionmaker
 
 from timeflow.business.auth import AccessTokenService, AuthAccessService
