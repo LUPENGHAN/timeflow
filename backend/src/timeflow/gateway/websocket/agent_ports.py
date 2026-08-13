@@ -18,6 +18,11 @@ class StreamIdentity(Protocol):
         ...
 
     @property
+    def voice_mode(self) -> str:
+        """push_to_talk or continuous, resolved at handshake."""
+        ...
+
+    @property
     def session_id(self) -> str:
         """Session the stream belongs to."""
         ...
@@ -160,6 +165,15 @@ class AudioReplyInfo(Protocol):
     @property
     def speech_text(self) -> str:
         """The words the audio says."""
+        ...
+
+
+class AudioCanceledInfo(Protocol):
+    """A spoken reply that was interrupted before it finished."""
+
+    @property
+    def audio_id(self) -> str:
+        """Identifier of the reply that was cut short."""
         ...
 
 

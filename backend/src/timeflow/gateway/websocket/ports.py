@@ -18,6 +18,8 @@ class SessionContext:
     # Resolved at handshake time: the client's IANA zone when it sent a valid one,
     # the deployment default otherwise. Never left unset.
     timezone: str = "Asia/Shanghai"
+    # Resolved at handshake time the same way: push_to_talk or continuous, never unset.
+    voice_mode: str = "push_to_talk"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +55,11 @@ class StreamContext:
     def timezone(self) -> str:
         """IANA zone resolved for this session."""
         return self.session.timezone
+
+    @property
+    def voice_mode(self) -> str:
+        """Voice interaction mode resolved for this session."""
+        return self.session.voice_mode
 
 
 class AudioSink(Protocol):

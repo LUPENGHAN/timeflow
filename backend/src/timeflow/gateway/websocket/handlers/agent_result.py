@@ -4,6 +4,7 @@ import logging
 from collections.abc import AsyncIterator
 
 from timeflow.gateway.websocket.agent_ports import (
+    AudioCanceledInfo,
     AudioReplyInfo,
     CommandOutcome,
     DialogueQuestionInfo,
@@ -27,6 +28,7 @@ from timeflow.gateway.websocket.messages.dialogue import (
     VoiceDialogueReplyPayload,
 )
 from timeflow.gateway.websocket.messages.tts import (
+    VoiceTtsCanceled,
     VoiceTtsEnd,
     VoiceTtsStart,
     VoiceTtsStartPayload,
@@ -133,6 +135,17 @@ class WebSocketResultSink:
                 "stopped speaking to a session that had gone",
                 extra={"session_id": stream.session_id, "audio_id": reply.audio_id},
             )
+
+    async def deliver_canceled(self, canceled: AudioCanceledInfo, stream: StreamIdentity) -> None:
+        """Push that a reply the client may already be hearing was cut short.
+
+        Sent ahead of the voice.tts.end that always still follows it.
+        """
+        message = VoiceTtsCanceled(
+            conversation_id=stream.conversation_id,
+            audio_id=canceled.audio_id,
+        )
+        await self._send(stream.session_id, message.type, message.model_dump())
 
     async def _send(self, session_id: str, message_type: str, envelope: dict[str, object]) -> None:
         """Send one message, logging rather than raising when the session has gone."""

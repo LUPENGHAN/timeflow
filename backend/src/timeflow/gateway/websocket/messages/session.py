@@ -14,6 +14,8 @@ class SessionHelloPayload(BaseModel):
     timezone: str | None = None
     latitude: float | None = None
     longitude: float | None = None
+    # push_to_talk | continuous; unset or unrecognized falls back to push_to_talk.
+    voice_mode: str | None = None
 
 
 class SessionHello(BaseModel):

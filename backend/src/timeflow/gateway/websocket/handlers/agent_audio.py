@@ -13,6 +13,7 @@ class _StreamIdentity:
 
     account_id: str
     timezone: str
+    voice_mode: str
     session_id: str
     stream_id: str
     conversation_id: str
@@ -36,6 +37,7 @@ def _identity_of(stream: StreamContext) -> _StreamIdentity:
     return _StreamIdentity(
         account_id=stream.account_id,
         timezone=stream.timezone,
+        voice_mode=stream.voice_mode,
         session_id=stream.session.session_id,
         stream_id=stream.stream_id,
         conversation_id=stream.conversation_id,

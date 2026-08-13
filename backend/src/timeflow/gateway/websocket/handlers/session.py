@@ -23,6 +23,8 @@ from timeflow.gateway.websocket.messages.session import (
 from timeflow.gateway.websocket.ports import SessionContext
 
 DEFAULT_TIMEZONE = "Asia/Shanghai"
+DEFAULT_VOICE_MODE = "push_to_talk"
+_VOICE_MODES = frozenset({"push_to_talk", "continuous"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +102,7 @@ class SessionHandshake:
             latitude=hello.payload.latitude,
             longitude=hello.payload.longitude,
             timezone=_resolved_timezone(hello.payload.timezone),
+            voice_mode=_resolved_voice_mode(hello.payload.voice_mode),
         )
         reply = SessionReady(
             request_id=hello.request_id,
@@ -135,4 +138,14 @@ def _resolved_timezone(candidate: str | None) -> str:
         get_schedule_timezone(candidate)
     except InvalidTimezoneKeyError:
         return DEFAULT_TIMEZONE
+    return candidate
+
+
+def _resolved_voice_mode(candidate: str | None) -> str:
+    """Use the client's requested voice mode when it is one we support, push-to-talk otherwise.
+
+    Resolved once here so every layer downstream can trust the string without re-validating.
+    """
+    if candidate not in _VOICE_MODES:
+        return DEFAULT_VOICE_MODE
     return candidate
