@@ -18,6 +18,7 @@ export interface SessionHelloPayload {
   timezone?: string;
   latitude?: number;
   longitude?: number;
+  voice_mode?: 'push_to_talk' | 'continuous';
 }
 export type SessionHelloMessage = OutgoingEnvelope<'session.hello', SessionHelloPayload>;
 
@@ -133,6 +134,17 @@ export interface VoiceTtsEndMessage {
   audio_id: string;
 }
 
+/**
+ * 连续模式下用户说话打断了正在播的回复。仍会补发 voice.tts.end（见后端
+ * connection_manager.stream_audio 的 docstring），所以客户端不会卡死，但要靠
+ * 这条消息才知道该把本地缓冲里还没播的音频丢掉，而不是当成正常说完。
+ */
+export interface VoiceTtsCanceledMessage {
+  type: 'voice.tts.canceled';
+  conversation_id: string;
+  audio_id: string;
+}
+
 export type AssistantServerMessage =
   | SessionReadyMessage
   | VoiceStreamStartedMessage
@@ -142,6 +154,7 @@ export type AssistantServerMessage =
   | VoiceDialogueReplyMessage
   | VoiceTtsStartMessage
   | VoiceTtsEndMessage
+  | VoiceTtsCanceledMessage
   | TransportErrorEnvelope;
 
 /** 窄化辅助：失败信封没有稳定的 `ok:false` 之外的判据，靠 `error` 字段是否存在区分。 */

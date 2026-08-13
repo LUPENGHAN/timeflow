@@ -10,6 +10,10 @@ export type ConversationTurnState =
   | { phase: 'awaiting_result'; conversationId: string }
   | { phase: 'asking'; conversationId: string; speechText: string }
   | { phase: 'speaking'; conversationId: string }
+  /** 连续模式专属：麦克风开着、待命中，既没在说话也没在播放回复。 */
+  | { phase: 'listening'; conversationId: string | null }
+  /** 连续模式专属：刚收到 voice.tts.canceled，用户的话打断了正在播的回复。 */
+  | { phase: 'interrupted'; conversationId: string }
   | { phase: 'error'; message: string };
 
 export interface AppliedCommand {

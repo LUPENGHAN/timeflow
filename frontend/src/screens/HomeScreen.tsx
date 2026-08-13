@@ -2,7 +2,10 @@ import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import type { AssistantApplicationPort } from '../features/assistant/application/AssistantApplication';
-import { AssistantVoiceOverlay } from '../features/assistant/presentation/AssistantVoiceOverlay';
+import {
+  AssistantVoiceOverlay,
+  type VoiceMode,
+} from '../features/assistant/presentation/AssistantVoiceOverlay';
 import { useAssistantConversation } from '../features/assistant/presentation/useAssistantConversation';
 import type { ScheduleCalendarReadService } from '../features/schedule/application';
 import { ScheduleCalendarScreen } from '../features/schedule/presentation/ScheduleCalendarScreen';
@@ -14,6 +17,8 @@ interface HomeScreenProps {
   timezone: string;
   /** 登录时填写的用户名；日历头部展示用，没有就退回显示 accountId。 */
   username?: string;
+  voiceMode: VoiceMode;
+  onToggleVoiceMode: () => void;
 }
 
 /** 登录后的主屏：日历 + 语音入口，共用同一个 AssistantConversationService 实例。 */
@@ -23,6 +28,8 @@ export function HomeScreen({
   accountId,
   timezone,
   username,
+  voiceMode,
+  onToggleVoiceMode,
 }: HomeScreenProps) {
   const { lastAppliedCommand } = useAssistantConversation(application);
   const [trackedCommand, setTrackedCommand] = useState(lastAppliedCommand);
@@ -48,7 +55,11 @@ export function HomeScreen({
         timezone={timezone}
         username={username}
       />
-      <AssistantVoiceOverlay application={application} />
+      <AssistantVoiceOverlay
+        application={application}
+        onToggleVoiceMode={onToggleVoiceMode}
+        voiceMode={voiceMode}
+      />
     </View>
   );
 }

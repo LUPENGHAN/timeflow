@@ -3,11 +3,14 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { accessAuth } from '../api/auth';
 import type { AuthAccessResponse } from '../contracts/auth';
+import type { AssistantApplicationPort } from '../features/assistant/application/AssistantApplication';
+import { AssistantContinuousConversationService } from '../features/assistant/application/AssistantContinuousConversationService';
 import { AssistantConversationService } from '../features/assistant/application/AssistantConversationService';
 import { ExpoAudioCapture } from '../features/assistant/data/audio/ExpoAudioCapture';
 import { ExpoAudioPlayback } from '../features/assistant/data/audio/ExpoAudioPlayback';
 import { LocalScheduleWriter } from '../features/assistant/data/local/LocalScheduleWriter';
 import { WebSocketVoiceTransport } from '../features/assistant/data/websocket/WebSocketVoiceTransport';
+import type { VoiceMode } from '../features/assistant/presentation/AssistantVoiceOverlay';
 import { SqliteScheduleClientService } from '../features/schedule/application';
 import { ScheduleLocalRepository } from '../features/schedule/data';
 import { openTimeflowDatabase } from '../infrastructure/database';
@@ -27,6 +30,7 @@ export function AppRoot() {
   const [repository, setRepository] = useState<ScheduleLocalRepository>();
   const [databaseError, setDatabaseError] = useState<string | null>(null);
   const [databaseRetryToken, setDatabaseRetryToken] = useState(0);
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>('push_to_talk');
 
   useEffect(() => {
     if (!session) return;
@@ -56,21 +60,53 @@ export function AppRoot() {
     [repository],
   );
 
-  const assistantApplication = useMemo(() => {
-    if (!session || !repository) {
+  // 两条编排路径共用同一批 port 实例：任意时刻只有一个通过 voiceMode 选中的
+  // 实例在跑，切换前用下面的 guard 确保旧实例已经回到 idle/error，不会有两个
+  // 服务同时抢麦克风/播放器。
+  const assistantDependencies = useMemo(() => {
+    if (!repository) {
+      return null;
+    }
+    return {
+      capture: new ExpoAudioCapture(),
+      localScheduleWriter: new LocalScheduleWriter(repository),
+      location: new ExpoLocationProvider(),
+      playback: new ExpoAudioPlayback(),
+      transport: new WebSocketVoiceTransport(),
+    };
+  }, [repository]);
+
+  const pushToTalkApplication = useMemo(() => {
+    if (!session || !assistantDependencies) {
       return null;
     }
     return new AssistantConversationService(
       { accessToken: session.access_token, accountId: session.account_id, deviceId, wsUrl: WS_URL },
-      {
-        capture: new ExpoAudioCapture(),
-        localScheduleWriter: new LocalScheduleWriter(repository),
-        location: new ExpoLocationProvider(),
-        playback: new ExpoAudioPlayback(),
-        transport: new WebSocketVoiceTransport(),
-      },
+      assistantDependencies,
     );
-  }, [session, deviceId, repository]);
+  }, [session, deviceId, assistantDependencies]);
+
+  const continuousApplication = useMemo(() => {
+    if (!session || !assistantDependencies) {
+      return null;
+    }
+    return new AssistantContinuousConversationService(
+      { accessToken: session.access_token, accountId: session.account_id, deviceId, wsUrl: WS_URL },
+      assistantDependencies,
+    );
+  }, [session, deviceId, assistantDependencies]);
+
+  const assistantApplication: AssistantApplicationPort | null =
+    voiceMode === 'push_to_talk' ? pushToTalkApplication : continuousApplication;
+
+  const toggleVoiceMode = useCallback(() => {
+    const active = voiceMode === 'push_to_talk' ? pushToTalkApplication : continuousApplication;
+    const phase = active?.getState().phase ?? 'idle';
+    if (phase !== 'idle' && phase !== 'error') {
+      return;
+    }
+    setVoiceMode((mode) => (mode === 'push_to_talk' ? 'continuous' : 'push_to_talk'));
+  }, [voiceMode, pushToTalkApplication, continuousApplication]);
 
   return (
     <AppProviders>
@@ -79,9 +115,11 @@ export function AppRoot() {
           <HomeScreen
             accountId={session.account_id}
             application={assistantApplication}
+            onToggleVoiceMode={toggleVoiceMode}
             scheduleService={scheduleService}
             timezone={Intl.DateTimeFormat().resolvedOptions().timeZone}
             username={username}
+            voiceMode={voiceMode}
           />
         ) : (
           <View style={styles.authenticatedScreen}>
