@@ -29,6 +29,7 @@ from timeflow.intelligence.location import (
     LocationSearchContext,
     LocationSearchService,
     ProviderLocationCandidate,
+    convert_coordinate,
 )
 from timeflow.intelligence.realtime.schedule_tools import ToolBox
 
@@ -95,13 +96,15 @@ SNAPSHOT = ScheduleSnapshot(
 
 
 class RecordingService(ScheduleAgentService):
-    """Accept every call, remembering which one the ToolBox chose."""
+    """Accept every call, remembering which one the ToolBox chose and its command."""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.last_command: Any = None
 
     def create_schedule(self, *, account_id: str, command: Any) -> ScheduleMutationResult:
         self.calls.append("create")
+        self.last_command = command
         return ScheduleMutationResult(schedules=(SNAPSHOT,))
 
     def find_schedules(self, *, account_id: str, query: Any) -> ScheduleSearchResult:
@@ -110,6 +113,7 @@ class RecordingService(ScheduleAgentService):
 
     def update_schedule(self, *, account_id: str, command: Any) -> ScheduleMutationResult:
         self.calls.append("update")
+        self.last_command = command
         return ScheduleMutationResult(schedules=(SNAPSHOT,))
 
     def delete_once_schedule(self, *, account_id: str, command: Any) -> ScheduleMutationResult:
@@ -443,6 +447,19 @@ def test_location_search_returns_real_candidates_when_configured() -> None:
     assert [item["name"] for item in payload["candidates"]] == ["万达广场"]
 
 
+def test_location_search_reports_invalid_input_for_a_blank_query() -> None:
+    box = ToolBox(
+        "acc_test",
+        RecordingService(),
+        location_service=LocationSearchService(_FakeLocationPort(())),
+        client_location=_client_location(),
+    )
+
+    result = run("location_search", {"query": "   "}, box)
+
+    assert json.loads(result.output) == {"status": "invalid_input", "candidates": []}
+
+
 def test_location_search_bypasses_datetime_normalization() -> None:
     """A query containing a 'T'-like substring must reach the tool unmangled -- proving
     location_search is dispatched before normalize_datetime_args, unlike the schedule tools.
@@ -490,3 +507,164 @@ def test_location_search_retries_a_failed_prepare_on_the_next_call() -> None:
     assert second["status"] == "ok"
     assert [item["name"] for item in second["candidates"]] == ["万达广场"]
     assert port.reverse_calls == 2
+
+
+def _candidate(provider_id: str = "poi-1") -> ProviderLocationCandidate:
+    return ProviderLocationCandidate(
+        provider_id,
+        "万达广场",
+        "银川路 100 号",
+        "商场",
+        Coordinate(31.23, 121.48, "gcj02"),
+        "上海市",
+        "上海市",
+        "闵行区",
+    )
+
+
+def _searched_box(
+    service: ScheduleAgentService, candidates: tuple[ProviderLocationCandidate, ...]
+) -> ToolBox:
+    """A ToolBox that has already run one location_search, so its candidates are cached."""
+    box = ToolBox(
+        "acc_test",
+        service,
+        location_service=LocationSearchService(_FakeLocationPort(candidates)),
+        client_location=_client_location(),
+    )
+    run("location_search", {"query": "万达广场"}, box)
+    return box
+
+
+def test_schedule_create_resolves_a_trusted_provider_id_to_wgs84_coordinates() -> None:
+    service = RecordingService()
+    box = _searched_box(service, (_candidate(),))
+
+    result = run(
+        "schedule_create",
+        {
+            "schedule_type": "location",
+            "schedule_kind": "once",
+            "title": "去万达广场",
+            "location_provider_id": "poi-1",
+        },
+        box,
+    )
+
+    assert json.loads(result.output)["status"] == "applied"
+    expected = convert_coordinate(Coordinate(31.23, 121.48, "gcj02"), "wgs84")
+    assert service.last_command.latitude == expected.latitude
+    assert service.last_command.longitude == expected.longitude
+    # The candidate was gcj02; a trusted write must not just echo the raw provider value.
+    assert service.last_command.latitude != 31.23
+    assert service.last_command.longitude != 121.48
+
+
+def test_schedule_update_resolves_a_trusted_provider_id_the_same_way() -> None:
+    service = RecordingService()
+    box = _searched_box(service, (_candidate(),))
+
+    result = run(
+        "schedule_update",
+        {
+            "schedule_id": "sch_1",
+            "expected_revision": 1,
+            "changes": {"location_provider_id": "poi-1"},
+        },
+        box,
+    )
+
+    assert json.loads(result.output)["status"] == "applied"
+    expected = convert_coordinate(Coordinate(31.23, 121.48, "gcj02"), "wgs84")
+    assert service.last_command.changes["latitude"] == expected.latitude
+    assert service.last_command.changes["longitude"] == expected.longitude
+
+
+def test_schedule_create_refuses_a_provider_id_that_was_never_searched() -> None:
+    service = RecordingService()
+    box = ToolBox(
+        "acc_test",
+        service,
+        location_service=LocationSearchService(_FakeLocationPort(())),
+        client_location=_client_location(),
+    )
+
+    result = run(
+        "schedule_create",
+        {
+            "schedule_type": "location",
+            "schedule_kind": "once",
+            "title": "去万达广场",
+            "location_provider_id": "invented-id",
+        },
+        box,
+    )
+
+    assert json.loads(result.output)["status"] == "failed"
+    assert service.calls == []
+
+
+def test_a_second_search_invalidates_the_previous_provider_id() -> None:
+    service = RecordingService()
+    port = _FakeLocationPort((_candidate("poi-1"),))
+    box = ToolBox(
+        "acc_test",
+        service,
+        location_service=LocationSearchService(port),
+        client_location=_client_location(),
+    )
+    run("location_search", {"query": "万达广场"}, box)
+    port.candidates = (_candidate("poi-2"),)  # a later search returns a different candidate set
+    run("location_search", {"query": "另一个地方"}, box)
+
+    result = run(
+        "schedule_create",
+        {
+            "schedule_type": "location",
+            "schedule_kind": "once",
+            "title": "去万达广场",
+            "location_provider_id": "poi-1",
+        },
+        box,
+    )
+
+    assert json.loads(result.output)["status"] == "failed"
+
+
+def test_schedule_create_still_rejects_a_raw_latitude_even_without_location_provider_id() -> None:
+    """ScheduleUpdatePatch still carries latitude/longitude for the business layer, so the
+    allowlist _reject_unknown checks against would otherwise wave a stray raw pair straight
+    through even though the tool schema no longer offers it to the model.
+    """
+    result = run(
+        "schedule_create",
+        {
+            "schedule_type": "location",
+            "schedule_kind": "once",
+            "title": "去万达广场",
+            "latitude": 31.23,
+            "longitude": 121.48,
+        },
+        ToolBox("acc_test", RecordingService()),
+    )
+
+    assert json.loads(result.output)["status"] == "failed"
+
+
+def test_a_null_location_provider_id_clears_the_coordinates() -> None:
+    service = RecordingService()
+    box = _searched_box(service, (_candidate(),))
+
+    result = run(
+        "schedule_update",
+        {
+            "schedule_id": "sch_1",
+            "expected_revision": 1,
+            "changes": {"location_provider_id": None},
+        },
+        box,
+    )
+
+    assert json.loads(result.output)["status"] == "applied"
+    assert service.last_command.changes["latitude"] is None
+    assert service.last_command.changes["longitude"] is None

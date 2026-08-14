@@ -26,12 +26,18 @@ from timeflow.intelligence.location import (
     LOCATION_SEARCH,
     PROVIDER_UNAVAILABLE_RESULT,
     ClientLocation,
+    LocationCandidate,
+    LocationConfigurationError,
+    LocationConnectionError,
     LocationError,
+    LocationInputError,
+    LocationProtocolError,
     LocationSearchContext,
     LocationSearchService,
-    build_location_search_tool,
+    convert_coordinate,
     location_search_definition,
 )
+from timeflow.intelligence.location.tools import _candidate_json, _query
 from timeflow.intelligence.realtime.tool_mapping import (
     ToolInputError,
     map_create_schedule_command,
@@ -97,8 +103,13 @@ _EDITABLE_PROPERTIES: dict[str, Any] = {
     "timezone": {"type": "string", "minLength": 1},
     "recurrence_rule": _NULLABLE_STRING_SCHEMA,
     "location_name": _NULLABLE_STRING_SCHEMA,
-    "latitude": {"type": ["number", "null"], "minimum": -90, "maximum": 90},
-    "longitude": {"type": ["number", "null"], "minimum": -180, "maximum": 180},
+    "location_provider_id": {
+        "type": ["string", "null"],
+        "description": (
+            "location_search 某条候选的 provider_id，只能用上一次 location_search 结果里"
+            "原样出现的值；不接受经纬度，坐标由服务端从该候选里取，不采信模型自己填的数字。"
+        ),
+    },
     "reminder_type": _REMINDER_TYPE_SCHEMA,
     "reminder_trigger_at": _DATETIME_SCHEMA,
     "reminder_offset_minutes": {"type": ["integer", "null"], "minimum": 0},
@@ -293,6 +304,10 @@ class ToolBox:
         self._location_service = location_service
         self._client_location = client_location
         self._location_context: LocationSearchContext | None = None
+        # 只信这次会话里最近一次 location_search 真正返回过的候选：schedule_create/
+        # update 只能引用 provider_id，不接受模型自己填的经纬度（issue #235 的可信坐标
+        # 约束）。每次新的 location_search 整体替换，不跨多轮搜索累积。
+        self._last_candidates: dict[str, LocationCandidate] = {}
 
     # The service is synchronous and reaches Postgres over a socket, so every call goes
     # to a worker thread: awaiting it inline would stall the loop streaming this turn's
@@ -350,10 +365,28 @@ class ToolBox:
                 self._location_context = await self._location_service.prepare(self._client_location)
             except LocationError:
                 return ToolResult(output=PROVIDER_UNAVAILABLE_RESULT)
-        tool = build_location_search_tool(self._location_service, self._location_context)
-        return ToolResult(output=await tool.execute(arguments))
+        try:
+            query = _query(arguments)
+            candidates = await self._location_service.search(self._location_context, query)
+        except LocationInputError:
+            self._last_candidates = {}
+            return ToolResult(
+                output=json.dumps({"status": "invalid_input", "candidates": []}, ensure_ascii=False)
+            )
+        except (LocationConfigurationError, LocationConnectionError, LocationProtocolError):
+            return ToolResult(output=PROVIDER_UNAVAILABLE_RESULT)
+        # 整体替换，不是累加：上一轮搜索的候选一旦被新搜索覆盖就不再可引用，逼着模型
+        # 用的 provider_id 始终对应最近一次搜索，不会拿到几轮之前已经过期的候选。
+        self._last_candidates = {candidate.provider_id: candidate for candidate in candidates}
+        return ToolResult(
+            output=json.dumps(
+                {"status": "ok", "candidates": [_candidate_json(c) for c in candidates]},
+                ensure_ascii=False,
+            )
+        )
 
     async def _create(self, arguments: dict[str, Any]) -> ToolResult:
+        self._resolve_location_provider_id(arguments)
         command = map_create_schedule_command(arguments, self._timezone)
         result = await asyncio.to_thread(
             partial(self._service.create_schedule, account_id=self._account_id, command=command)
@@ -379,11 +412,48 @@ class ToolBox:
         )
 
     async def _update(self, arguments: dict[str, Any]) -> ToolResult:
+        changes = arguments.get("changes")
+        if isinstance(changes, dict):
+            self._resolve_location_provider_id(changes)
         command = map_update_schedule_command(arguments)
         result = await asyncio.to_thread(
             partial(self._service.update_schedule, account_id=self._account_id, command=command)
         )
         return _mutation_result(result, "update_schedule", self._timezone)
+
+    def _resolve_location_provider_id(self, fields: dict[str, Any]) -> None:
+        """Replace a trusted location_provider_id with server-known WGS84 coordinates.
+
+        The model never supplies latitude/longitude directly -- dropped from the tool
+        schema, and rejected here too if present anyway, since ScheduleUpdatePatch
+        (the business-layer allowlist _reject_unknown checks against) still carries
+        those keys and would otherwise wave a stray raw pair straight through. The
+        model can only reference a provider_id from this session's most recent
+        location_search results. Not found (stale, wrong turn, or invented) is a
+        ToolInputError, not a silent no-op -- the model must search again rather than
+        the schedule silently keeping its old coordinates.
+        """
+        if "latitude" in fields or "longitude" in fields:
+            raise ToolInputError(
+                "latitude/longitude 不是有效参数，改用 location_provider_id 引用"
+                "location_search 的候选。"
+            )
+        if "location_provider_id" not in fields:
+            return
+        provider_id = fields.pop("location_provider_id")
+        if provider_id is None:
+            fields["latitude"] = None
+            fields["longitude"] = None
+            return
+        candidate = self._last_candidates.get(provider_id)
+        if candidate is None:
+            raise ToolInputError(
+                "location_provider_id 不是最近一次 location_search 返回的候选，"
+                "请重新调用 location_search 再引用。"
+            )
+        coordinate = convert_coordinate(candidate.coordinate, "wgs84")
+        fields["latitude"] = coordinate.latitude
+        fields["longitude"] = coordinate.longitude
 
     async def _delete(self, arguments: dict[str, Any]) -> ToolResult:
         command = map_delete_schedule_command(arguments)

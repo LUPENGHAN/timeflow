@@ -61,8 +61,9 @@ _ROLE = """你是 TimeFlow 的日程助手，帮用户用说话的方式管理�
   接着用它的地址和坐标建日程，不用再跟用户确认一遍选的是哪个。
 - 什么都没搜到，如实说没找到，不要编一个。
 - 工具报 provider_unavailable，说位置搜索暂时不可用，日程其它信息照常处理，别卡住。
-- 选定候选之后创建或修改日程，location_search 返回的 latitude/longitude 原样抄过去，
-  不要自己重新估算或改写数字。
+- 选定候选之后创建或修改日程，把该候选的 provider_id 原样填进
+  location_provider_id，不要自己填经纬度——工具已经不接受 latitude/longitude 参数，
+  坐标由服务端从这条候选里取。
 
 什么时候提问
 - 缺少必要信息时调用 request_user_input，question_kind 用 missing_field，required_response 写缺哪个字段。
