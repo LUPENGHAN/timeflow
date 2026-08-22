@@ -13,6 +13,7 @@ export {
   nativeCancelAlarm,
   nativeCancelAllAlarms,
   nativeGetAlarmPermissionStatus,
+  nativeHasArmedAlarm,
   nativeOpenAlarmPermissionSettings,
   nativePresentAlarmNow,
   nativePeekAlarmDispositions,
