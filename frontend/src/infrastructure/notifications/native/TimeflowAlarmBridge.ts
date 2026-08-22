@@ -1,5 +1,7 @@
 import { NativeEventEmitter, NativeModules, Platform } from 'react-native';
 
+import type { AlarmSoundTier } from '../../../features/reminder/domain/strengthDelivery';
+
 export type NativeAlarmPermissionStatus = {
   exactAlarm: boolean;
   overlay: boolean;
@@ -35,7 +37,7 @@ type TimeflowAlarmNative = {
     title?: string | null,
     scheduleId?: string | null,
     vibrate?: boolean,
-    sound?: boolean,
+    soundTier?: AlarmSoundTier,
     fullScreen?: boolean,
   ) => Promise<{ alarmId: string; scheduleId?: string }>;
   cancel: (alarmId: string) => Promise<boolean>;
@@ -46,7 +48,7 @@ type TimeflowAlarmNative = {
     scheduleId: string,
     title: string,
     vibrate: boolean,
-    sound: boolean,
+    soundTier: AlarmSoundTier,
     fullScreen: boolean,
   ) => Promise<boolean>;
   peekNativeDispositions: () => Promise<NativeAlarmDispositionPayload[]>;
@@ -76,7 +78,7 @@ export async function nativeScheduleAlarm(
   title: string,
   scheduleId?: string,
   vibrate?: boolean,
-  sound?: boolean,
+  soundTier?: AlarmSoundTier,
   fullScreen?: boolean,
 ): Promise<string | null> {
   const native = getNativeAlarm();
@@ -87,7 +89,7 @@ export async function nativeScheduleAlarm(
       title,
       scheduleId ?? '',
       vibrate ?? true,
-      sound ?? true,
+      soundTier ?? 'full',
       fullScreen ?? true,
     );
     return result.alarmId;
@@ -134,13 +136,13 @@ export async function nativePresentAlarmNow(
   scheduleId: string,
   title: string,
   vibrate: boolean,
-  sound: boolean,
+  soundTier: AlarmSoundTier,
   fullScreen: boolean,
 ): Promise<boolean> {
   const native = getNativeAlarm();
   if (!isTimeflowAlarmAvailable() || native == null) return false;
   try {
-    return await native.presentNow(alarmId, scheduleId, title, vibrate, sound, fullScreen);
+    return await native.presentNow(alarmId, scheduleId, title, vibrate, soundTier, fullScreen);
   } catch (error) {
     console.warn('[TimeflowAlarm] nativePresentAlarmNow failed', error);
     return false;

@@ -48,7 +48,7 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
     title: String?,
     scheduleId: String?,
     vibrate: Boolean,
-    sound: Boolean,
+    soundTier: String?,
     fullScreen: Boolean,
     promise: Promise,
   ) {
@@ -56,7 +56,7 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
       Log.i(
         NAME,
         "schedule triggerAtMillis=$triggerAtMillis title=$title scheduleId=$scheduleId " +
-          "vibrate=$vibrate sound=$sound fullScreen=$fullScreen",
+          "vibrate=$vibrate soundTier=$soundTier fullScreen=$fullScreen",
       )
       val alarmId = AlarmScheduler.schedule(
         reactContext,
@@ -64,7 +64,7 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
         title ?: "日程提醒",
         scheduleId ?: "",
         vibrate,
-        sound,
+        soundTier ?: AlarmContract.SOUND_TIER_FULL,
         fullScreen,
       )
       Log.i(NAME, "scheduled alarmId=$alarmId")
@@ -120,7 +120,7 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
     scheduleId: String?,
     title: String?,
     vibrate: Boolean,
-    sound: Boolean,
+    soundTier: String?,
     fullScreen: Boolean,
     promise: Promise,
   ) {
@@ -135,7 +135,7 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
         AlarmScheduler.immediateRequestCode(resolvedAlarmId),
         resolvedTitle,
         vibrate,
-        sound,
+        soundTier ?: AlarmContract.SOUND_TIER_FULL,
         fullScreen,
       )
       Log.i(NAME, "presentNow requested alarmId=$resolvedAlarmId scheduleId=$resolvedScheduleId")

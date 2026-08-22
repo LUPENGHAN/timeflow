@@ -29,7 +29,7 @@ export class NativeAlarmScheduler implements AlarmSchedulerPort {
       request.schedule_id,
       request.title,
       request.vibrate,
-      request.sound,
+      request.sound_tier,
       request.full_screen,
     );
     return {
@@ -59,7 +59,7 @@ export class NativeAlarmScheduler implements AlarmSchedulerPort {
       request.title,
       request.schedule_id,
       request.vibrate,
-      request.sound,
+      request.sound_tier,
       request.full_screen,
     );
     if (alarmId == null || alarmId.length === 0) {

@@ -1,3 +1,5 @@
+import type { AlarmSoundTier } from '../../domain/strengthDelivery';
+
 export type AlarmScheduleRequest = {
   schedule_id: string;
   trigger_at: string;
@@ -5,7 +7,7 @@ export type AlarmScheduleRequest = {
   exact: boolean;
   /** 原生响铃时是否震动/出声/弹全屏止铃界面；由提醒强度换算而来。 */
   vibrate: boolean;
-  sound: boolean;
+  sound_tier: AlarmSoundTier;
   full_screen: boolean;
 };
 
@@ -36,7 +38,7 @@ export type AlarmPresentationRequest = {
   schedule_id: string;
   title: string;
   vibrate: boolean;
-  sound: boolean;
+  sound_tier: AlarmSoundTier;
   full_screen: boolean;
 };
 

@@ -386,7 +386,7 @@ async function deliverHeadlessGeofenceEvent(
           sound: 'default',
           data: { schedule_id: schedule.id, reason: schedule.reminder_type ?? 'arrive_location' },
         },
-        trigger: null,
+        trigger: { channelId: 'timeflow-reminders' },
       });
     }
 
@@ -418,12 +418,15 @@ async function presentHeadlessNativeAlarm(
 ): Promise<boolean> {
   try {
     const bridge = await import('../notifications/native/TimeflowAlarmBridge');
+    const { resolveStrengthDeliveryPlan } =
+      await import('../../features/reminder/domain/strengthDelivery');
+    const plan = resolveStrengthDeliveryPlan(strength);
     return await bridge.nativePresentAlarmNow(
       `geofence-${scheduleId}-${Date.now()}`,
       scheduleId,
       title,
-      strength !== 'low',
-      strength === 'high',
+      plan.useVibration,
+      plan.alarmSoundTier,
       true,
     );
   } catch {
@@ -457,11 +460,16 @@ async function loadNotifications(): Promise<typeof import('expo-notifications') 
 async function ensureAndroidChannel(
   notifications: typeof import('expo-notifications'),
 ): Promise<void> {
+  // 独立渠道 ID，不跟 ExpoSystemNotification.ts 的 'timeflow-reminders-quiet' 共用——
+  // 这条路径故意要出声（地点提醒 headless 兜底），渠道声音创建后不可变，两边共用
+  // 一个渠道 ID 谁先创建谁的设置就永久生效，另一边的诉求会被吃掉。显式给 sound
+  // 赋值而不是留给默认值，避免依赖未文档化的隐式行为。
   await notifications.setNotificationChannelAsync('timeflow-reminders', {
     name: '日程提醒',
     importance: notifications.AndroidImportance.DEFAULT,
     vibrationPattern: [0, 180],
     lightColor: '#D7F36A',
+    sound: 'default',
   });
 }
 
