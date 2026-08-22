@@ -41,6 +41,14 @@ type TimeflowAlarmNative = {
   cancel: (alarmId: string) => Promise<boolean>;
   cancelAll: () => Promise<number>;
   stopRinging: () => Promise<boolean>;
+  presentNow: (
+    alarmId: string,
+    scheduleId: string,
+    title: string,
+    vibrate: boolean,
+    sound: boolean,
+    fullScreen: boolean,
+  ) => Promise<boolean>;
   peekNativeDispositions: () => Promise<NativeAlarmDispositionPayload[]>;
   ackNativeDispositions: (scheduleIds: string[]) => Promise<boolean>;
   getPermissionStatus: () => Promise<NativeAlarmPermissionStatus>;
@@ -118,6 +126,24 @@ export async function nativeStopAlarmRinging(): Promise<void> {
     await native.stopRinging();
   } catch {
     // 尽力停铃，忽略失败。
+  }
+}
+
+export async function nativePresentAlarmNow(
+  alarmId: string,
+  scheduleId: string,
+  title: string,
+  vibrate: boolean,
+  sound: boolean,
+  fullScreen: boolean,
+): Promise<boolean> {
+  const native = getNativeAlarm();
+  if (!isTimeflowAlarmAvailable() || native == null) return false;
+  try {
+    return await native.presentNow(alarmId, scheduleId, title, vibrate, sound, fullScreen);
+  } catch (error) {
+    console.warn('[TimeflowAlarm] nativePresentAlarmNow failed', error);
+    return false;
   }
 }
 

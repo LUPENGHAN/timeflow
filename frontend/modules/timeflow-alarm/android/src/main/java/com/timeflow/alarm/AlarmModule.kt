@@ -115,6 +115,38 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
   }
 
   @ReactMethod
+  fun presentNow(
+    alarmId: String?,
+    scheduleId: String?,
+    title: String?,
+    vibrate: Boolean,
+    sound: Boolean,
+    fullScreen: Boolean,
+    promise: Promise,
+  ) {
+    try {
+      val resolvedAlarmId = alarmId?.takeIf { it.isNotEmpty() } ?: "geofence-${System.currentTimeMillis()}"
+      val resolvedScheduleId = scheduleId ?: ""
+      val resolvedTitle = title?.takeIf { it.isNotEmpty() } ?: "日程提醒"
+      AlarmSoundService.start(
+        reactContext,
+        resolvedAlarmId,
+        resolvedScheduleId,
+        AlarmScheduler.immediateRequestCode(resolvedAlarmId),
+        resolvedTitle,
+        vibrate,
+        sound,
+        fullScreen,
+      )
+      Log.i(NAME, "presentNow requested alarmId=$resolvedAlarmId scheduleId=$resolvedScheduleId")
+      promise.resolve(true)
+    } catch (error: Exception) {
+      Log.w(NAME, "presentNow failed", error)
+      promise.reject("PRESENT_NOW_FAILED", error.message, error)
+    }
+  }
+
+  @ReactMethod
   fun peekNativeDispositions(promise: Promise) {
     try {
       val records = AlarmNativeBridge.peekDispositions(reactContext)

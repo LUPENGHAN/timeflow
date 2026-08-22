@@ -7,6 +7,8 @@ import type {
   AlarmScheduleReceipt,
   AlarmScheduleRequest,
   AlarmSchedulerPort,
+  LocationMonitorEvent,
+  LocationRebuildTarget,
   LocationWatchRequest,
   PopupRequest,
   ReminderApplicationDependencies,
@@ -685,6 +687,115 @@ describe('LocalReminderApplication', () => {
 
       await expect(deps.state.read('s1')).resolves.toMatchObject({ geofence_armed: true });
       expect(deps.presenter.show).not.toHaveBeenCalled();
+    });
+
+    it('does not deliver when the initial sample is already inside the zone', async () => {
+      const schedule = fixtureLocationSchedule({ id: 's1' });
+      const deps = createDeps({ schedules: new FakeScheduleReader([schedule]) });
+      let initialListener: ((event: LocationMonitorEvent) => unknown) | undefined;
+      const watch = jest.fn(
+        async (
+          request: LocationWatchRequest,
+          listener: (event: LocationMonitorEvent) => unknown,
+        ) => {
+          initialListener = listener;
+          return { listener_id: `loc-${request.schedule_id}`, schedule_id: request.schedule_id };
+        },
+      );
+      deps.location.watch = watch;
+      const app = new LocalReminderApplication(deps);
+      await app.start();
+      await app.register(schedule);
+
+      await initialListener?.({
+        schedule_id: 's1',
+        phase: 'inside',
+        sample: {
+          latitude: 31.2304,
+          longitude: 121.4737,
+          accuracy_meters: 10,
+          observed_at: '2026-08-18T10:00:00.000Z',
+        },
+      });
+
+      expect(deps.presenter.show).not.toHaveBeenCalled();
+    });
+
+    it('does not treat an initial sample outside the zone as an immediate arrival', async () => {
+      const schedule = fixtureLocationSchedule({ id: 's1' });
+      const deps = createDeps({ schedules: new FakeScheduleReader([schedule]) });
+      let initialListener: ((event: LocationMonitorEvent) => unknown) | undefined;
+      deps.location.watch = jest.fn(
+        async (
+          request: LocationWatchRequest,
+          listener: (event: LocationMonitorEvent) => unknown,
+        ) => {
+          initialListener = listener;
+          return { listener_id: `loc-${request.schedule_id}`, schedule_id: request.schedule_id };
+        },
+      );
+      const app = new LocalReminderApplication(deps);
+      await app.start();
+      await app.register(schedule);
+
+      await initialListener?.({
+        schedule_id: 's1',
+        phase: 'inside',
+        sample: {
+          latitude: 40,
+          longitude: 121.4737,
+          accuracy_meters: 10,
+          observed_at: '2026-08-18T10:00:00.000Z',
+        },
+      });
+
+      expect(deps.presenter.show).not.toHaveBeenCalled();
+      await expect(deps.state.read('s1')).resolves.toMatchObject({ geofence_armed: true });
+    });
+
+    it('does not drop the initial sample emitted during a bulk location rebuild', async () => {
+      const schedule = fixtureLocationSchedule({
+        id: 's1',
+        runtime: { ...emptyRuntime(), geofence_armed: true },
+      });
+      const reader = new FakeScheduleReader([]);
+      const deps = createDeps({ schedules: reader });
+      deps.location.rebuild = jest.fn(
+        async (
+          targets: readonly LocationRebuildTarget[],
+          listener: (event: LocationMonitorEvent) => void,
+        ) => {
+          const target = targets[0];
+          if (target == null) return [];
+          // ExpoLocationMonitor emits its initial sample before rebuild() returns.
+          await Promise.resolve(
+            listener({
+              schedule_id: target.schedule_id,
+              phase: 'inside',
+              sample: {
+                latitude: 31.2304,
+                longitude: 121.4737,
+                accuracy_meters: 10,
+                observed_at: '2026-08-18T10:00:00.000Z',
+              },
+            }),
+          );
+          return [
+            {
+              listener_id: `loc-${target.schedule_id}`,
+              schedule_id: target.schedule_id,
+            },
+          ];
+        },
+      );
+      const app = new LocalReminderApplication(deps);
+      await app.start();
+
+      reader.schedules = [schedule];
+      await deps.state.write('s1', schedule.runtime);
+      await app.rebuild();
+
+      expect(deps.presenter.show).toHaveBeenCalledTimes(1);
     });
 
     it('delivers once an armed geofence is re-entered, then disarms it', async () => {

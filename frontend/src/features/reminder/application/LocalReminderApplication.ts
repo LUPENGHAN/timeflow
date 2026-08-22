@@ -315,6 +315,18 @@ export class LocalReminderApplication implements ReminderApplicationPort {
 
     if (!this.isLive(generation)) return [];
 
+    // location.rebuild() 会在系统围栏注册完成后立即派发一次当前位置样本。先放入
+    // 占位 registration，确保这次初始样本不会因批量重建尚未返回 handle 而被忽略。
+    for (const schedule of active) {
+      this.registrations.set(schedule.id, {
+        schedule_id: schedule.id,
+        time_listener_id: this.timeListenerId,
+        location_listener_id: null,
+        alarm_id: null,
+        schedule,
+      });
+    }
+
     const locationTargets = active
       .filter((schedule) => schedule.schedule_type === 'location')
       .map((schedule) => {
@@ -330,9 +342,12 @@ export class LocalReminderApplication implements ReminderApplicationPort {
         };
       })
       .filter((target): target is NonNullable<typeof target> => target != null);
-    const locationHandles = await this.dependencies.location.rebuild(locationTargets, (event) => {
-      void this.handleLocationMonitorEvent(event);
-    });
+    const locationHandles = await this.dependencies.location.rebuild(
+      locationTargets,
+      async (event) => {
+        await this.handleLocationMonitorEvent(event);
+      },
+    );
     const locationBySchedule = new Map<string, LocationWatchHandle>(
       locationHandles.map((handle) => [handle.schedule_id, handle]),
     );
@@ -652,12 +667,34 @@ export class LocalReminderApplication implements ReminderApplicationPort {
         let usedFallbackAudio = false;
         let deliveryId = `delivery-${schedule.id}`;
 
-        // 时间型日程只要排上了原生精确闹钟，响铃 UI 和声音就全权交给原生
-        // RingActivity/AlarmSoundService；JS 这边再弹 Alert/放音会跟原生的全屏页
-        // 抢事件，谁都关不掉谁。地点型日程没有原生等价物，走完整 JS 通道。
-        const nativeAlarmOwnsRingUi =
+        // 时间型日程只要排上了原生精确闹钟，响铃 UI 和声音就全权交给原生。
+        // 地点型日程也优先复用同一套全局页面；iOS/旧包没有 presentNow 时再回退 JS。
+        let nativeAlarmOwnsRingUi =
           schedule.schedule_type === 'time' &&
           this.registrations.get(schedule.id)?.alarm_id != null;
+
+        if (schedule.schedule_type === 'location' && this.dependencies.alarms.presentNow != null) {
+          const nativeReceipt = await this.dependencies.alarms.presentNow({
+            alarm_id: `geofence-${schedule.id}-${Date.now()}`,
+            schedule_id: schedule.id,
+            title: schedule.title,
+            vibrate: plan.useVibration,
+            sound: plan.useAudio,
+            full_screen: true,
+          });
+          if (nativeReceipt.presented) {
+            nativeAlarmOwnsRingUi = true;
+            deliveryId = `native-${nativeReceipt.alarm_id}`;
+            channels.push('native_full_screen');
+            return {
+              delivery_id: deliveryId,
+              schedule_id: schedule.id,
+              delivered_at: trigger.triggered_at,
+              channels,
+              used_fallback_audio: false,
+            };
+          }
+        }
 
         // low=系统通知；medium=弹窗+短震动；high=弹窗+短震动+TTS（失败则本地音）。
         if (plan.useSystemNotification) {
@@ -868,6 +905,7 @@ export class LocalReminderApplication implements ReminderApplicationPort {
     if (!this.isLive(generation)) return;
     const schedule = await this.withStoredRuntime(raw);
     if (schedule.schedule_type !== 'location') return;
+    const mode = resolveWatchMode(schedule);
     await this.applyLocationSample(schedule, event.sample, generation);
   }
 
@@ -997,8 +1035,8 @@ export class LocalReminderApplication implements ReminderApplicationPort {
         mode,
         background: true,
       },
-      (event) => {
-        void this.handleLocationMonitorEvent(event);
+      async (event) => {
+        await this.handleLocationMonitorEvent(event);
       },
     );
     void this.reportPermissionGaps(schedule.id, ['location_foreground', 'location_background']);

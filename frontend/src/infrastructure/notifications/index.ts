@@ -14,6 +14,7 @@ export {
   nativeCancelAllAlarms,
   nativeGetAlarmPermissionStatus,
   nativeOpenAlarmPermissionSettings,
+  nativePresentAlarmNow,
   nativePeekAlarmDispositions,
   nativeRequestNotificationPermission,
   nativeScheduleAlarm,

@@ -16,6 +16,7 @@ import { colors, spacing } from '../../../shared/ui/theme';
 import type { ScheduleCalendarReadService, ScheduleOccurrenceView } from '../application';
 import { LocationScheduleDetailSheet } from './LocationScheduleDetailSheet';
 import { LocationScheduleRow } from './LocationScheduleRow';
+import { GeofenceDiagnosticsPanel } from './GeofenceDiagnosticsPanel';
 import { MonthCalendar } from './MonthCalendar';
 import { ScheduleOccurrenceDetailSheet } from './ScheduleOccurrenceDetailSheet';
 import { ScheduleOccurrenceRow } from './ScheduleOccurrenceRow';
@@ -203,6 +204,10 @@ export function ScheduleCalendarScreen({
                     />
                   ))}
                 </View>
+              ) : null}
+
+              {__DEV__ && process.env.NODE_ENV !== 'test' ? (
+                <GeofenceDiagnosticsPanel schedules={calendar.locationSchedules} />
               ) : null}
             </View>
           ) : null}

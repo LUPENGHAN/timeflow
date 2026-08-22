@@ -13,6 +13,7 @@ import type { LocationSample } from '../../features/reminder/domain';
 import {
   GEOFENCE_TASK_NAME,
   drainPendingGeofenceEvents,
+  recordGeofenceDiagnostic,
   subscribeGeofenceTaskEvents,
   type GeofenceTaskPayload,
 } from './geofenceTask';
@@ -21,7 +22,7 @@ import type { LocationProvider } from './LocationProvider';
 type ActiveWatch = {
   listener_id: string;
   request: LocationWatchRequest;
-  listener: (event: LocationMonitorEvent) => void;
+  listener: (event: LocationMonitorEvent) => unknown;
 };
 
 /** ≈1.1km，足够超出任何合理的围栏半径，用来给 exit 事件合成一个"明显在圈外"的采样点。 */
@@ -56,7 +57,7 @@ export class ExpoLocationMonitor implements LocationMonitorPort, LocationProvide
 
   async watch(
     request: LocationWatchRequest,
-    listener: (event: LocationMonitorEvent) => void,
+    listener: (event: LocationMonitorEvent) => unknown,
   ): Promise<LocationWatchHandle> {
     const existingId = this.scheduleToListener.get(request.schedule_id);
     if (existingId != null) {
@@ -70,7 +71,8 @@ export class ExpoLocationMonitor implements LocationMonitorPort, LocationProvide
 
     const sample = await this.getCurrentSample();
     if (sample != null) {
-      listener({ schedule_id: request.schedule_id, sample, phase: 'inside' });
+      await this.recordInitialSample(request.schedule_id, sample);
+      await listener({ schedule_id: request.schedule_id, sample, phase: 'inside' });
     }
     await this.replayPendingEvents();
 
@@ -83,7 +85,7 @@ export class ExpoLocationMonitor implements LocationMonitorPort, LocationProvide
 
   async rebuild(
     targets: readonly LocationRebuildTarget[],
-    listener: (event: LocationMonitorEvent) => void,
+    listener: (event: LocationMonitorEvent) => unknown,
   ): Promise<readonly LocationWatchHandle[]> {
     for (const listenerId of [...this.watches.keys()]) {
       await this.removeWatch(listenerId, false);
@@ -115,7 +117,8 @@ export class ExpoLocationMonitor implements LocationMonitorPort, LocationProvide
     const sample = await this.getCurrentSample();
     if (sample != null) {
       for (const handle of handles) {
-        listener({ schedule_id: handle.schedule_id, sample, phase: 'inside' });
+        await this.recordInitialSample(handle.schedule_id, sample);
+        await listener({ schedule_id: handle.schedule_id, sample, phase: 'inside' });
       }
     }
 
@@ -165,11 +168,11 @@ export class ExpoLocationMonitor implements LocationMonitorPort, LocationProvide
   private async replayPendingEvents(): Promise<void> {
     const pending = await drainPendingGeofenceEvents();
     for (const payload of pending) {
-      this.handleTaskEvent(payload);
+      await this.handleTaskEvent(payload);
     }
   }
 
-  private readonly handleTaskEvent = (payload: GeofenceTaskPayload): void => {
+  private readonly handleTaskEvent = async (payload: GeofenceTaskPayload): Promise<void> => {
     const listenerId = this.scheduleToListener.get(payload.schedule_id);
     const watch = listenerId != null ? this.watches.get(listenerId) : undefined;
     if (watch == null) return;
@@ -189,7 +192,7 @@ export class ExpoLocationMonitor implements LocationMonitorPort, LocationProvide
             observed_at: payload.observed_at,
           };
     this.lastSample = sample;
-    watch.listener({
+    await watch.listener({
       schedule_id: watch.request.schedule_id,
       sample,
       phase: payload.event === 'enter' ? 'entered' : 'left',
@@ -255,10 +258,31 @@ export class ExpoLocationMonitor implements LocationMonitorPort, LocationProvide
 
     try {
       await Location.startGeofencingAsync(GEOFENCE_TASK_NAME, regions);
+      await Promise.all(
+        [...this.watches.values()].map((watch) =>
+          recordGeofenceDiagnostic({
+            phase: 'registration_succeeded',
+            schedule_id: watch.request.schedule_id,
+            event: 'registration',
+            observed_at: new Date().toISOString(),
+            detail: `已向系统注册 ${regions.length} 个围栏`,
+          }),
+        ),
+      );
     } catch (error) {
       // 系统围栏注册失败（比如权限被收回）；下次 watch()/rebuild() 会再重试。
       console.warn('[geofence] startGeofencingAsync failed', error);
     }
+  }
+
+  private async recordInitialSample(scheduleId: string, sample: LocationSample): Promise<void> {
+    await recordGeofenceDiagnostic({
+      phase: 'initial_location_sample',
+      schedule_id: scheduleId,
+      event: 'initial_sample',
+      observed_at: sample.observed_at,
+      detail: '应用主动读取当前位置，不是系统围栏回调',
+    });
   }
 }
 
