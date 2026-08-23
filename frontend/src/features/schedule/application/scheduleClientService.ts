@@ -76,6 +76,9 @@ export interface LocationScheduleView {
   locationName: string | null;
   reminderType: ReminderType | null;
   reminderStrength: ReminderStrength | null;
+  /** 调试面板要算跟当前位置的距离，才带上坐标——普通日历读场景不需要展示它。 */
+  latitude: number | null;
+  longitude: number | null;
 }
 
 /**
@@ -304,6 +307,8 @@ function toLocationView(
     locationName: schedule.location_name,
     reminderType: schedule.reminder_type,
     reminderStrength: schedule.reminder_strength,
+    latitude: schedule.latitude,
+    longitude: schedule.longitude,
   };
 }
 

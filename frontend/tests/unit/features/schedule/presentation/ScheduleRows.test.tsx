@@ -192,6 +192,8 @@ describe('LocationScheduleRow', () => {
       locationName: '公司',
       reminderType: 'arrive_location',
       reminderStrength: 'high',
+      latitude: null,
+      longitude: null,
     };
 
     render(<LocationScheduleRow item={item} />);
@@ -216,6 +218,8 @@ describe('LocationScheduleRow', () => {
       locationName: null,
       reminderType: null,
       reminderStrength: null,
+      latitude: null,
+      longitude: null,
     };
 
     render(<LocationScheduleRow item={item} />);

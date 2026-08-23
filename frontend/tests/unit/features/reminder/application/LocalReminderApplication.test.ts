@@ -1333,4 +1333,105 @@ describe('LocalReminderApplication', () => {
       expect(listener).not.toHaveBeenCalled();
     });
   });
+
+  describe('stuck-pending rescue (session-alive)', () => {
+    it('re-delivers a schedule stuck in pending for longer than the threshold', async () => {
+      const schedule = fixtureSchedule({
+        id: 's1',
+        runtime: {
+          ...emptyRuntime(),
+          reminder_disposition_state: 'pending',
+          disposition_updated_at: '2026-08-18T10:00:00.000Z',
+        },
+      });
+      const deps = createDeps({ schedules: new FakeScheduleReader([schedule]) });
+      await deps.state.write('s1', schedule.runtime);
+      const app = new LocalReminderApplication(deps);
+      await app.start();
+
+      // 卡了超过 2 分钟（阈值）还没确认/延后。
+      await app.handleTime({ observed_at: '2026-08-18T10:02:30.000Z' });
+
+      expect(deps.vibration.vibrate).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not re-deliver a schedule still within the stuck threshold', async () => {
+      const schedule = fixtureSchedule({
+        id: 's1',
+        runtime: {
+          ...emptyRuntime(),
+          reminder_disposition_state: 'pending',
+          disposition_updated_at: '2026-08-18T10:00:00.000Z',
+        },
+      });
+      const deps = createDeps({ schedules: new FakeScheduleReader([schedule]) });
+      await deps.state.write('s1', schedule.runtime);
+      const app = new LocalReminderApplication(deps);
+      await app.start();
+
+      // 才卡了 1 分钟，还没到 2 分钟阈值。
+      await app.handleTime({ observed_at: '2026-08-18T10:01:00.000Z' });
+
+      expect(deps.vibration.vibrate).not.toHaveBeenCalled();
+    });
+
+    it('does not re-deliver a confirmed schedule', async () => {
+      const schedule = fixtureSchedule({
+        id: 's1',
+        runtime: {
+          ...emptyRuntime(),
+          reminder_disposition_state: 'confirmed',
+          disposition_updated_at: '2026-08-18T10:00:00.000Z',
+        },
+      });
+      const deps = createDeps({ schedules: new FakeScheduleReader([schedule]) });
+      await deps.state.write('s1', schedule.runtime);
+      const app = new LocalReminderApplication(deps);
+      await app.start();
+
+      await app.handleTime({ observed_at: '2026-08-18T10:30:00.000Z' });
+
+      expect(deps.vibration.vibrate).not.toHaveBeenCalled();
+    });
+
+    it('backs off when a concurrent confirm changes disposition_updated_at between the two reads', async () => {
+      // confirm()/snooze() 走独立的 opChain，跟 30s tick 之间没有共享锁——模拟这个
+      // 竞态窗口：第一次读到"卡住的旧时间戳"，触发前再读一次时已经被 confirm 抢先
+      // 改掉了，必须放弃这次补弹，不能把刚确认完的提醒又弹回来。
+      const schedule = fixtureSchedule({
+        id: 's1',
+        runtime: {
+          ...emptyRuntime(),
+          reminder_disposition_state: 'pending',
+          disposition_updated_at: '2026-08-18T10:00:00.000Z',
+        },
+      });
+      const deps = createDeps({ schedules: new FakeScheduleReader([schedule]) });
+      await deps.state.write('s1', schedule.runtime);
+      const app = new LocalReminderApplication(deps);
+      await app.start();
+
+      const originalRead = deps.state.read.bind(deps.state);
+      let readCount = 0;
+      deps.state.read = jest.fn(async (scheduleId: string) => {
+        readCount += 1;
+        // 第一次读（判定是否卡住）之后，模拟一次并发 confirm() 把状态改掉，
+        // 再验证第二次读（recheck）能看到这个变化并放弃。
+        if (readCount === 1) {
+          const result = await originalRead(scheduleId);
+          await deps.state.write(scheduleId, {
+            ...(result ?? emptyRuntime()),
+            reminder_disposition_state: 'confirmed',
+            disposition_updated_at: '2026-08-18T10:02:00.000Z',
+          });
+          return result;
+        }
+        return originalRead(scheduleId);
+      });
+
+      await app.handleTime({ observed_at: '2026-08-18T10:02:30.000Z' });
+
+      expect(deps.vibration.vibrate).not.toHaveBeenCalled();
+    });
+  });
 });

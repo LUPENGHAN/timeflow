@@ -11,6 +11,10 @@ import {
   simulateGeofenceEventForTesting,
   type GeofenceDiagnostic,
 } from '../../../infrastructure/location/geofenceTask';
+import {
+  DEFAULT_GEOFENCE_RADIUS_METERS,
+  distanceMeters,
+} from '../../reminder/domain/geofence';
 import type { LocationScheduleView } from '../application';
 import { colors, spacing } from '../../../shared/ui/theme';
 
@@ -19,6 +23,7 @@ type DiagnosticState = {
   background: string;
   geofence: string;
   position: string;
+  currentPoint: { latitude: number; longitude: number } | null;
   systemCallback: string;
   events: readonly GeofenceDiagnostic[];
 };
@@ -28,6 +33,7 @@ const INITIAL_STATE: DiagnosticState = {
   background: '未读取',
   geofence: '未读取',
   position: '未读取',
+  currentPoint: null,
   systemCallback: '本次未收到系统回调',
   events: [],
 };
@@ -67,6 +73,7 @@ export function GeofenceDiagnosticsPanel({
         background: background.status,
         geofence: geofence ? '已注册' : '未注册',
         position: `${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`,
+        currentPoint: { latitude: position.coords.latitude, longitude: position.coords.longitude },
         systemCallback: systemCallback ? describeDiagnostic(systemCallback) : '本次未收到系统回调',
         events: diagnostics.slice(-8).reverse(),
       });
@@ -175,6 +182,9 @@ export function GeofenceDiagnosticsPanel({
           <Text numberOfLines={1} style={styles.scheduleTitle}>
             {schedule.title}
           </Text>
+          <Text style={styles.scheduleDistance}>
+            {describeDistance(state.currentPoint, schedule)}
+          </Text>
           <View style={styles.actions}>
             <ActionButton
               label="模拟离开"
@@ -196,6 +206,28 @@ export function GeofenceDiagnosticsPanel({
       {message ? <Text style={styles.message}>{message}</Text> : null}
     </View>
   );
+}
+
+/**
+ * 用模拟定位软件测试时，光看经纬度数字没法判断"是不是已经到附近了"——这里直接
+ * 把距离和半径都摆出来，不用再自己心算或者拿地图量。半径是应用级默认值（见
+ * geofence.ts 的 DEFAULT_GEOFENCE_RADIUS_METERS），不是逐条日程可配的，所以
+ * 三条日程共用同一个半径显示。
+ */
+function describeDistance(
+  currentPoint: { latitude: number; longitude: number } | null,
+  schedule: LocationScheduleView,
+): string {
+  if (currentPoint == null) return '点"刷新定位状态"后显示距离';
+  if (schedule.latitude == null || schedule.longitude == null) {
+    return '这条日程没有坐标，算不出距离';
+  }
+  const meters = distanceMeters(currentPoint, {
+    latitude: schedule.latitude,
+    longitude: schedule.longitude,
+  });
+  const inside = meters <= DEFAULT_GEOFENCE_RADIUS_METERS;
+  return `距中心 ${Math.round(meters)}m（半径 ${DEFAULT_GEOFENCE_RADIUS_METERS}m）${inside ? '· 已在圈内' : ''}`;
 }
 
 function formatDiagnosticTime(value: string): string {
@@ -299,11 +331,16 @@ const styles = StyleSheet.create({
     marginTop: spacing.md,
     paddingTop: spacing.md,
   },
+  scheduleDistance: {
+    color: '#BFD1C8',
+    fontSize: 12,
+    marginBottom: spacing.sm,
+  },
   scheduleTitle: {
     color: colors.onPrimary,
     fontSize: 14,
     fontWeight: '700',
-    marginBottom: spacing.sm,
+    marginBottom: 2,
   },
   secondaryButton: { backgroundColor: '#2B4A40', borderColor: '#567267', borderWidth: 1 },
   secondaryButtonText: { color: colors.onPrimary },

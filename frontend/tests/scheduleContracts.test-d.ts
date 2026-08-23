@@ -154,6 +154,8 @@ export type LocationScheduleViewContract = Assert<
     | 'locationName'
     | 'reminderType'
     | 'reminderStrength'
+    | 'latitude'
+    | 'longitude'
   >
 >;
 

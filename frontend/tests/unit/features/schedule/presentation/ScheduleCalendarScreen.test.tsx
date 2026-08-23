@@ -60,6 +60,8 @@ function createService(
           locationName: '公司',
           reminderType: 'arrive_location',
           reminderStrength: 'high',
+          latitude: null,
+          longitude: null,
         },
       ]),
   };
@@ -444,6 +446,8 @@ describe('ScheduleCalendarScreen location schedules', () => {
       locationName: '公司',
       reminderType: 'arrive_location' as const,
       reminderStrength: 'high' as const,
+      latitude: null,
+      longitude: null,
     };
     const getLocationSchedules = service.getLocationSchedules as jest.MockedFunction<
       ScheduleCalendarReadService['getLocationSchedules']

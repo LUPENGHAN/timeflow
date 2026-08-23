@@ -130,6 +130,8 @@ describe('schedule detail sheets', () => {
       locationName: null,
       reminderType: null,
       reminderStrength: null,
+      latitude: null,
+      longitude: null,
     };
     render(<LocationScheduleDetailSheet onClose={onClose} schedule={schedule} />);
 
