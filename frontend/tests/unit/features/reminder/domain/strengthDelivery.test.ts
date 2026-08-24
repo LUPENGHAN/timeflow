@@ -42,16 +42,22 @@ describe('resolveStrengthDeliveryPlan', () => {
 });
 
 describe('composeReminderSpeech', () => {
-  it('high with title only returns the title', () => {
-    expect(composeReminderSpeech(speechSchedule('high', ' 九点面试 ', null))).toBe('九点面试');
+  it('high with title only wraps it with a reminder prefix and suffix', () => {
+    expect(composeReminderSpeech(speechSchedule('high', ' 九点面试 ', null))).toBe(
+      '提醒你，九点面试，别忘了',
+    );
   });
 
-  it('high with location appends the location', () => {
-    expect(composeReminderSpeech(speechSchedule('high', '拿快递', '家'))).toBe('拿快递，在家');
+  it('high with location appends the location before the suffix', () => {
+    expect(composeReminderSpeech(speechSchedule('high', '拿快递', '家'))).toBe(
+      '提醒你，拿快递，地点在家，别忘了',
+    );
   });
 
   it('high with blank location falls back to title only', () => {
-    expect(composeReminderSpeech(speechSchedule('high', '开会', '  '))).toBe('开会');
+    expect(composeReminderSpeech(speechSchedule('high', '开会', '  '))).toBe(
+      '提醒你，开会，别忘了',
+    );
   });
 
   it('non-high returns empty string', () => {

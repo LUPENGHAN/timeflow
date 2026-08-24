@@ -45,13 +45,15 @@ export function resolveStrengthDeliveryPlan(strength: ReminderStrength): Strengt
 }
 
 /**
- * 高强度提醒交给设备 TTS 念的文案：标题 + 位置（标题是用户原话、通常已含时间，不再
- * 叠结构化开始时间）。非 high 或标题为空返回空串，原生按"无文案"回退打包铃。
+ * 高强度提醒交给设备 TTS 念的文案：提醒前缀 + 标题 + 位置 + 收尾（标题是用户原话、
+ * 通常已含时间，不再叠结构化开始时间）。非 high 或标题为空返回空串，原生按
+ * "无文案"回退打包铃。
  */
 export function composeReminderSpeech(schedule: LocalReminderSchedule): string {
   if (schedule.reminder?.reminder_strength !== 'high') return '';
   const title = schedule.title?.trim();
   if (!title) return '';
   const location = schedule.location_name?.trim();
-  return location ? `${title}，在${location}` : title;
+  const body = location ? `${title}，地点在${location}` : title;
+  return `提醒你，${body}，别忘了`;
 }
