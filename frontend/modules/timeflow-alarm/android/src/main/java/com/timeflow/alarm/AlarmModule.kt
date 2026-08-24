@@ -11,7 +11,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
-import android.speech.tts.TextToSpeech
 import android.util.Log
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
@@ -231,80 +230,6 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
     }
   }
 
-  /**
-   * 读最近一次记录的设备 TTS 引擎探测结果（AlarmSoundService 真的响过一次闹钟时，
-   * 或者调用方自己调过 checkTextToSpeechNow()）。从来没探测过时 resolve(null)——
-   * 调试面板据此显示"还没测过"而不是"不可用"，两者含义不一样。
-   */
-  @ReactMethod
-  fun getTtsDiagnostics(promise: Promise) {
-    try {
-      val diagnostics = AlarmNativeBridge.getTtsDiagnostics(reactContext)
-      if (diagnostics == null) {
-        promise.resolve(null)
-        return
-      }
-      promise.resolve(ttsDiagnosticsMap(diagnostics.ready, diagnostics.statusCode,
-        diagnostics.detail, diagnostics.source, diagnostics.checkedAtMillis))
-    } catch (error: Exception) {
-      promise.reject("GET_TTS_DIAGNOSTICS_FAILED", error.message, error)
-    }
-  }
-
-  /**
-   * 立即在当前 App 前台进程里探测一次 TTS 引擎，不用等真的响一次闹钟——但注意
-   * 这是前台探测，跟闹钟真正触发时（App 可能在后台/被系统限制）的进程状态不一定
-   * 一样，只能当第一层排查，不能替代"最近一次真实闹钟触发"那条记录。
-   */
-  @ReactMethod
-  fun checkTextToSpeechNow(promise: Promise) {
-    var resolved = false
-    var probe: TextToSpeech? = null
-    val timeoutRunnable = Runnable {
-      if (resolved) return@Runnable
-      resolved = true
-      AlarmNativeBridge.recordTtsDiagnostics(reactContext, false, -2, "timeout", "manual")
-      promise.resolve(ttsDiagnosticsMap(false, -2, "timeout", "manual", System.currentTimeMillis()))
-      probe?.shutdown()
-    }
-    mainHandler.postDelayed(timeoutRunnable, TTS_CHECK_TIMEOUT_MILLIS)
-    try {
-      probe = TextToSpeech(reactContext) { status ->
-        if (resolved) return@TextToSpeech
-        resolved = true
-        mainHandler.removeCallbacks(timeoutRunnable)
-        val ready = status == TextToSpeech.SUCCESS
-        val detail = if (ready) "ok" else "init_failed"
-        AlarmNativeBridge.recordTtsDiagnostics(reactContext, ready, status, detail, "manual")
-        promise.resolve(ttsDiagnosticsMap(ready, status, detail, "manual", System.currentTimeMillis()))
-        probe?.shutdown()
-      }
-    } catch (error: Exception) {
-      if (!resolved) {
-        resolved = true
-        mainHandler.removeCallbacks(timeoutRunnable)
-        AlarmNativeBridge.recordTtsDiagnostics(
-          reactContext, false, -1, "exception:${error.javaClass.simpleName}", "manual")
-        promise.resolve(
-          ttsDiagnosticsMap(false, -1, "exception:${error.javaClass.simpleName}", "manual",
-            System.currentTimeMillis())
-        )
-      }
-    }
-  }
-
-  private fun ttsDiagnosticsMap(
-    ready: Boolean, statusCode: Int, detail: String, source: String, checkedAtMillis: Long,
-  ): WritableMap {
-    val map = Arguments.createMap()
-    map.putBoolean("ready", ready)
-    map.putInt("statusCode", statusCode)
-    map.putString("detail", detail)
-    map.putString("source", source)
-    map.putDouble("checkedAtMillis", checkedAtMillis.toDouble())
-    return map
-  }
-
   @ReactMethod
   fun getPermissionStatus(promise: Promise) {
     try {
@@ -470,7 +395,6 @@ class AlarmModule(private val reactContext: ReactApplicationContext) :
     private val pendingPresentations = ConcurrentHashMap<String, Promise>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private const val PRESENT_TIMEOUT_MILLIS = 4_000L
-    private const val TTS_CHECK_TIMEOUT_MILLIS = 4_000L
 
     /** AlarmSoundService（Java，同包）在 presentAlarm() 成功/失败之后回调；
      * 没有对应 alarmId 在等（比如原生闹钟自己触发的、不是 presentNow() 发起的）

@@ -33,8 +33,6 @@ final class AlarmContract {
     static final String PREFS_NAME = "timeflow_alarms";
     static final String ALARMS_KEY = "pending_alarms";
     static final String DISPOSITIONS_KEY = "native_dispositions";
-    /** 最近一次设备 TTS 引擎初始化/探测结果——JS 端调试面板读这个，不用等真的响一次闹钟。 */
-    static final String TTS_DIAGNOSTICS_KEY = "tts_diagnostics";
     static final String ALARM_URI_SCHEME = "timeflow-alarm";
     /**
      * 自启动/后台弹出界面没有标准 API 能查真实授权状态，这三个 key 只记录

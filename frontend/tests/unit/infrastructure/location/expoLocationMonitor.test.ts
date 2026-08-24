@@ -9,7 +9,6 @@ import type {
 import { ExpoLocationMonitor } from '../../../../src/infrastructure/location/ExpoLocationMonitor';
 import {
   drainPendingGeofenceEvents,
-  recordGeofenceDiagnostic,
   subscribeGeofenceTaskEvents,
 } from '../../../../src/infrastructure/location/geofenceTask';
 
@@ -28,7 +27,6 @@ jest.mock('../../../../src/infrastructure/location/geofenceTask', () => ({
   GEOFENCE_TASK_NAME: 'timeflow-geofence',
   subscribeGeofenceTaskEvents: jest.fn(),
   drainPendingGeofenceEvents: jest.fn(),
-  recordGeofenceDiagnostic: jest.fn(async () => {}),
 }));
 
 const getForeground = Location.getForegroundPermissionsAsync as jest.MockedFunction<
@@ -60,9 +58,6 @@ const subscribeTaskEvents = subscribeGeofenceTaskEvents as jest.MockedFunction<
 >;
 const drainPending = drainPendingGeofenceEvents as jest.MockedFunction<
   typeof drainPendingGeofenceEvents
->;
-const recordDiagnostic = recordGeofenceDiagnostic as jest.MockedFunction<
-  typeof recordGeofenceDiagnostic
 >;
 
 function granted(): Location.LocationPermissionResponse {
@@ -173,12 +168,6 @@ describe('ExpoLocationMonitor', () => {
           phase: 'inside',
         },
       ]);
-      expect(recordDiagnostic).toHaveBeenCalledWith(
-        expect.objectContaining({ phase: 'registration_succeeded', schedule_id: 'schedule-1' }),
-      );
-      expect(recordDiagnostic).toHaveBeenCalledWith(
-        expect.objectContaining({ phase: 'initial_location_sample', schedule_id: 'schedule-1' }),
-      );
     });
 
     it('does not deliver an initial sample when the current position is unavailable', async () => {

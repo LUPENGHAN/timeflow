@@ -13,7 +13,6 @@ import type { LocationSample } from '../../features/reminder/domain';
 import {
   GEOFENCE_TASK_NAME,
   drainPendingGeofenceEvents,
-  recordGeofenceDiagnostic,
   subscribeGeofenceTaskEvents,
   type GeofenceTaskPayload,
 } from './geofenceTask';
@@ -71,7 +70,6 @@ export class ExpoLocationMonitor implements LocationMonitorPort, LocationProvide
 
     const sample = await this.getCurrentSample();
     if (sample != null) {
-      await this.recordInitialSample(request.schedule_id, sample);
       await listener({ schedule_id: request.schedule_id, sample, phase: 'inside' });
     }
     await this.replayPendingEvents();
@@ -117,7 +115,6 @@ export class ExpoLocationMonitor implements LocationMonitorPort, LocationProvide
     const sample = await this.getCurrentSample();
     if (sample != null) {
       for (const handle of handles) {
-        await this.recordInitialSample(handle.schedule_id, sample);
         await listener({ schedule_id: handle.schedule_id, sample, phase: 'inside' });
       }
     }
@@ -258,31 +255,10 @@ export class ExpoLocationMonitor implements LocationMonitorPort, LocationProvide
 
     try {
       await Location.startGeofencingAsync(GEOFENCE_TASK_NAME, regions);
-      await Promise.all(
-        [...this.watches.values()].map((watch) =>
-          recordGeofenceDiagnostic({
-            phase: 'registration_succeeded',
-            schedule_id: watch.request.schedule_id,
-            event: 'registration',
-            observed_at: new Date().toISOString(),
-            detail: `已向系统注册 ${regions.length} 个围栏`,
-          }),
-        ),
-      );
     } catch (error) {
       // 系统围栏注册失败（比如权限被收回）；下次 watch()/rebuild() 会再重试。
       console.warn('[geofence] startGeofencingAsync failed', error);
     }
-  }
-
-  private async recordInitialSample(scheduleId: string, sample: LocationSample): Promise<void> {
-    await recordGeofenceDiagnostic({
-      phase: 'initial_location_sample',
-      schedule_id: scheduleId,
-      event: 'initial_sample',
-      observed_at: sample.observed_at,
-      detail: '应用主动读取当前位置，不是系统围栏回调',
-    });
   }
 }
 

@@ -31,16 +31,6 @@ export type NativeAlarmDispositionPayload = {
   updatedAtMillis: number;
 };
 
-export type NativeTtsDiagnostics = {
-  ready: boolean;
-  statusCode: number;
-  detail: string;
-  /** 'alarm' = 真的响过一次闹钟时原生自己记的；'manual' = 调试面板主动探测的
-   * （跑在前台 App 进程里，跟闹钟真正后台触发时的进程状态不一定一样）。 */
-  source: 'alarm' | 'manual' | string;
-  checkedAtMillis: number;
-};
-
 type TimeflowAlarmNative = {
   schedule: (
     triggerAtMillis: number,
@@ -66,8 +56,6 @@ type TimeflowAlarmNative = {
   hasArmedAlarm: (scheduleId: string) => Promise<boolean>;
   peekNativeDispositions: () => Promise<NativeAlarmDispositionPayload[]>;
   ackNativeDispositions: (scheduleIds: string[]) => Promise<boolean>;
-  getTtsDiagnostics: () => Promise<NativeTtsDiagnostics | null>;
-  checkTextToSpeechNow: () => Promise<NativeTtsDiagnostics>;
   getPermissionStatus: () => Promise<NativeAlarmPermissionStatus>;
   openPermissionSettings: (
     kind:
@@ -202,45 +190,6 @@ export async function nativeAckAlarmDispositions(scheduleIds: readonly string[])
     await native.ackNativeDispositions([...scheduleIds]);
   } catch {
     // 确认失败就不清缓冲区，下次冷启动重新 peek 到、重放同样的幂等状态转换。
-  }
-}
-
-/** 最近一次记录的设备 TTS 探测结果——从没探测过（比如刚装好、从没响过一次高强度
- * 提醒）时是 null，跟"探测过但不可用"是两种不同的含义，调用方要分开处理。 */
-export async function nativeGetTtsDiagnostics(): Promise<NativeTtsDiagnostics | null> {
-  const native = getNativeAlarm();
-  if (!isTimeflowAlarmAvailable() || native == null) return null;
-  try {
-    return await native.getTtsDiagnostics();
-  } catch {
-    return null;
-  }
-}
-
-/** 立即在前台探测一次 TTS 引擎；跑在前台 App 进程里，跟后台真实闹钟触发时的
- * 进程状态不一定一样，仅供第一层排查用。原生模块不可用时退化成一个"未就绪"的
- * 结果，不是 null——调用方不用再单独判断"探测本身有没有跑起来"。 */
-export async function nativeCheckTtsNow(): Promise<NativeTtsDiagnostics> {
-  const native = getNativeAlarm();
-  if (!isTimeflowAlarmAvailable() || native == null) {
-    return {
-      ready: false,
-      statusCode: -1,
-      detail: 'native_module_unavailable',
-      source: 'manual',
-      checkedAtMillis: Date.now(),
-    };
-  }
-  try {
-    return await native.checkTextToSpeechNow();
-  } catch (error) {
-    return {
-      ready: false,
-      statusCode: -1,
-      detail: error instanceof Error ? error.message : 'unknown_error',
-      source: 'manual',
-      checkedAtMillis: Date.now(),
-    };
   }
 }
 

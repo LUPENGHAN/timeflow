@@ -22,8 +22,7 @@ import java.util.Locale
  *
  * 局限：App 进程被系统整个杀掉、又被闹钟的 PendingIntent 重新拉起这种冷启动场景，
  * 这个提前绑定帮不上忙——那种情况下这里同样是第一次尝试绑定，跟改之前一样可能被拦。
- * 这只解决"进程还活着、只是被认为在后台"这一种场景，不是万能药，真正确诊/规避
- * 系统限制要看 AlarmSoundService 里落的 diagnostics.source（"eager" vs 首次失败时机）。
+ * 这只解决"进程还活着、只是被认为在后台"这一种场景，不是万能药。
  */
 object AlarmTtsEngine {
     private const val TAG = "AlarmTtsEngine"
@@ -44,22 +43,18 @@ object AlarmTtsEngine {
         initStarted = true
         val appContext = context.applicationContext
         try {
-            engine = TextToSpeech(appContext) { status -> onInit(appContext, status) }
+            engine = TextToSpeech(appContext) { status -> onInit(status) }
         } catch (error: RuntimeException) {
             Log.w(TAG, "TextToSpeech unavailable", error)
             engine = null
             ready = false
-            AlarmNativeBridge.recordTtsDiagnostics(
-                appContext, false, -1, "exception:${error.javaClass.simpleName}", "eager",
-            )
         }
     }
 
-    private fun onInit(context: Context, status: Int) {
+    private fun onInit(status: Int) {
         if (status != TextToSpeech.SUCCESS) {
             Log.w(TAG, "init failed status=$status")
             ready = false
-            AlarmNativeBridge.recordTtsDiagnostics(context, false, status, "init_failed", "eager")
             return
         }
         val locale = Locale.getDefault()
@@ -69,9 +64,6 @@ object AlarmTtsEngine {
         ) {
             Log.w(TAG, "language unavailable locale=$locale")
             ready = false
-            AlarmNativeBridge.recordTtsDiagnostics(
-                context, false, availability, "language_unavailable:$locale", "eager",
-            )
             return
         }
         engine?.setLanguage(locale)
@@ -83,7 +75,6 @@ object AlarmTtsEngine {
         )
         ready = true
         Log.i(TAG, "ready")
-        AlarmNativeBridge.recordTtsDiagnostics(context, true, TextToSpeech.SUCCESS, "ready", "eager")
         val callback = pendingReadyCallback
         pendingReadyCallback = null
         callback?.invoke()

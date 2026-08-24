@@ -9,9 +9,7 @@ import {
   nativeAreAlarmPermissionsGranted,
   nativeCancelAlarm,
   nativeCancelAllAlarms,
-  nativeCheckTtsNow,
   nativeGetAlarmPermissionStatus,
-  nativeGetTtsDiagnostics,
   nativeOpenAlarmPermissionSettings,
   nativePeekAlarmDispositions,
   nativeRequestNotificationPermission,
@@ -31,8 +29,6 @@ jest.mock('react-native', () => {
     stopRinging: jest.fn(),
     peekNativeDispositions: jest.fn(),
     ackNativeDispositions: jest.fn(),
-    getTtsDiagnostics: jest.fn(),
-    checkTextToSpeechNow: jest.fn(),
     getPermissionStatus: jest.fn(),
     openPermissionSettings: jest.fn(),
     requestNotificationPermission: jest.fn(),
@@ -79,24 +75,6 @@ type NativeAlarmMock = {
     () => Promise<{ scheduleId: string; alarmId: string; state: string; updatedAtMillis: number }[]>
   >;
   ackNativeDispositions: jest.MockedFunction<(scheduleIds: string[]) => Promise<boolean>>;
-  getTtsDiagnostics: jest.MockedFunction<
-    () => Promise<{
-      ready: boolean;
-      statusCode: number;
-      detail: string;
-      source: string;
-      checkedAtMillis: number;
-    } | null>
-  >;
-  checkTextToSpeechNow: jest.MockedFunction<
-    () => Promise<{
-      ready: boolean;
-      statusCode: number;
-      detail: string;
-      source: string;
-      checkedAtMillis: number;
-    }>
-  >;
   getPermissionStatus: jest.MockedFunction<
     () => Promise<{
       exactAlarm: boolean;
@@ -160,8 +138,6 @@ describe('TimeflowAlarmBridge and NativeAlarmScheduler', () => {
     native.stopRinging.mockReset();
     native.peekNativeDispositions.mockReset();
     native.ackNativeDispositions.mockReset();
-    native.getTtsDiagnostics.mockReset();
-    native.checkTextToSpeechNow.mockReset();
     native.getPermissionStatus.mockReset();
     native.openPermissionSettings.mockReset();
     native.requestNotificationPermission.mockReset();
@@ -172,7 +148,6 @@ describe('TimeflowAlarmBridge and NativeAlarmScheduler', () => {
     native.stopRinging.mockResolvedValue(true);
     native.peekNativeDispositions.mockResolvedValue([]);
     native.ackNativeDispositions.mockResolvedValue(true);
-    native.getTtsDiagnostics.mockResolvedValue(null);
     native.openPermissionSettings.mockResolvedValue(true);
     native.requestNotificationPermission.mockResolvedValue(true);
   });
@@ -552,70 +527,5 @@ describe('TimeflowAlarmBridge and NativeAlarmScheduler', () => {
     native.requestNotificationPermission.mockRejectedValue(new Error('permission failed'));
     await expect(nativeOpenAlarmPermissionSettings('app')).resolves.toBe(false);
     await expect(nativeRequestNotificationPermission()).resolves.toBe(false);
-  });
-
-  describe('TTS diagnostics', () => {
-    it('returns null when nothing has been recorded yet', async () => {
-      native.getTtsDiagnostics.mockResolvedValue(null);
-      await expect(nativeGetTtsDiagnostics()).resolves.toBeNull();
-    });
-
-    it('forwards the last recorded TTS diagnostics from the bridge', async () => {
-      native.getTtsDiagnostics.mockResolvedValue({
-        ready: false,
-        statusCode: -1,
-        detail: 'init_failed',
-        source: 'alarm',
-        checkedAtMillis: 123,
-      });
-      await expect(nativeGetTtsDiagnostics()).resolves.toEqual({
-        ready: false,
-        statusCode: -1,
-        detail: 'init_failed',
-        source: 'alarm',
-        checkedAtMillis: 123,
-      });
-    });
-
-    it('getTtsDiagnostics resolves null off Android or on bridge rejection', async () => {
-      Platform.OS = 'ios';
-      await expect(nativeGetTtsDiagnostics()).resolves.toBeNull();
-      Platform.OS = 'android';
-
-      native.getTtsDiagnostics.mockRejectedValue(new Error('bridge failed'));
-      await expect(nativeGetTtsDiagnostics()).resolves.toBeNull();
-    });
-
-    it('forwards an on-demand TTS check to the bridge', async () => {
-      native.checkTextToSpeechNow.mockResolvedValue({
-        ready: true,
-        statusCode: 0,
-        detail: 'ok',
-        source: 'manual',
-        checkedAtMillis: 456,
-      });
-      await expect(nativeCheckTtsNow()).resolves.toEqual({
-        ready: true,
-        statusCode: 0,
-        detail: 'ok',
-        source: 'manual',
-        checkedAtMillis: 456,
-      });
-    });
-
-    it('checkTextToSpeechNow fails closed with a not-ready result off Android or on rejection', async () => {
-      Platform.OS = 'ios';
-      await expect(nativeCheckTtsNow()).resolves.toMatchObject({
-        ready: false,
-        detail: 'native_module_unavailable',
-      });
-      Platform.OS = 'android';
-
-      native.checkTextToSpeechNow.mockRejectedValue(new Error('probe failed'));
-      await expect(nativeCheckTtsNow()).resolves.toMatchObject({
-        ready: false,
-        detail: 'probe failed',
-      });
-    });
   });
 });
