@@ -42,38 +42,52 @@ describe('resolveStrengthDeliveryPlan', () => {
 });
 
 describe('composeReminderSpeech', () => {
-  it('high with title only wraps it with a reminder prefix and suffix', () => {
-    expect(composeReminderSpeech(speechSchedule('high', ' 九点面试 ', null))).toBe(
-      '提醒你，九点面试，别忘了',
+  it('high with a timed start speaks the title and the local clock time', () => {
+    // 2026-08-18T10:00:00.000Z == Asia/Shanghai 18:00
+    expect(composeReminderSpeech(speechSchedule('high', ' 九点面试 ', false, '2026-08-18T10:00:00.000Z'))).toBe(
+      '九点面试，时间到了。现在已经18点了。',
     );
   });
 
-  it('high with location appends the location before the suffix', () => {
-    expect(composeReminderSpeech(speechSchedule('high', '拿快递', '家'))).toBe(
-      '提醒你，拿快递，地点在家，别忘了',
+  it('high with a non-zero minute includes the minute', () => {
+    expect(
+      composeReminderSpeech(speechSchedule('high', '拿快递', false, '2026-08-18T10:30:00.000Z')),
+    ).toBe('拿快递，时间到了。现在已经18点30分了。');
+  });
+
+  it('high all-day schedule speaks the date instead of a clock time', () => {
+    expect(composeReminderSpeech(speechSchedule('high', '交房租', true, '2026-08-18T10:00:00.000Z'))).toBe(
+      '8月18日，今天任务是交房租。',
     );
   });
 
-  it('high with blank location falls back to title only', () => {
-    expect(composeReminderSpeech(speechSchedule('high', '开会', '  '))).toBe(
-      '提醒你，开会，别忘了',
+  it('high with no start_time falls back to a generic prompt', () => {
+    expect(composeReminderSpeech(speechSchedule('high', '开会', false, null))).toBe(
+      '开会，时间到了，请及时处理。',
+    );
+  });
+
+  it('high with blank title falls back to a placeholder title', () => {
+    expect(composeReminderSpeech(speechSchedule('high', '   ', false, null))).toBe(
+      '未命名日程，时间到了，请及时处理。',
     );
   });
 
   it('non-high returns empty string', () => {
-    expect(composeReminderSpeech(speechSchedule('medium', '开会', '家'))).toBe('');
-    expect(composeReminderSpeech(speechSchedule('low', '开会', '家'))).toBe('');
-  });
-
-  it('high with blank title returns empty string', () => {
-    expect(composeReminderSpeech(speechSchedule('high', '   ', '家'))).toBe('');
+    expect(composeReminderSpeech(speechSchedule('medium', '开会', false, '2026-08-18T10:00:00.000Z'))).toBe(
+      '',
+    );
+    expect(composeReminderSpeech(speechSchedule('low', '开会', false, '2026-08-18T10:00:00.000Z'))).toBe(
+      '',
+    );
   });
 });
 
 function speechSchedule(
   strength: ReminderStrength,
   title: string,
-  locationName: string | null,
+  isAllDay: boolean,
+  startTime: string | null,
 ): LocalReminderSchedule {
   return {
     id: 's1',
@@ -81,12 +95,12 @@ function speechSchedule(
     title,
     schedule_type: 'time',
     schedule_kind: 'once',
-    is_all_day: false,
-    start_time: '2026-08-18T10:00:00.000Z',
+    is_all_day: isAllDay,
+    start_time: startTime,
     end_time: null,
     timezone: 'Asia/Shanghai',
     recurrence_rule: null,
-    location_name: locationName,
+    location_name: null,
     latitude: null,
     longitude: null,
     geofence_radius_meters: 200,

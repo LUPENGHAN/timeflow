@@ -69,6 +69,7 @@ type NativeAlarmMock = {
       vibrate?: boolean,
       soundTier?: string,
       fullScreen?: boolean,
+      speechText?: string | null,
     ) => Promise<{ alarmId: string }>
   >;
   cancel: jest.MockedFunction<(alarmId: string) => Promise<boolean>>;

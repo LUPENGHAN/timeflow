@@ -82,30 +82,30 @@ final class AlarmContract {
         final String alarmId;
         final String scheduleId;
         final String title;
+        final String speechText;
         final int requestCode;
         final boolean vibrate;
         final String soundTier;
         final boolean fullScreen;
-        final String speechText;
 
         private ExtractedExtras(
                 String alarmId,
                 String scheduleId,
                 String title,
+                String speechText,
                 int requestCode,
                 boolean vibrate,
                 String soundTier,
-                boolean fullScreen,
-                String speechText
+                boolean fullScreen
         ) {
             this.alarmId = alarmId;
             this.scheduleId = scheduleId;
             this.title = title;
+            this.speechText = speechText;
             this.requestCode = requestCode;
             this.vibrate = vibrate;
             this.soundTier = soundTier;
             this.fullScreen = fullScreen;
-            this.speechText = speechText;
         }
 
         static ExtractedExtras from(Context context, Intent intent) {
@@ -113,6 +113,7 @@ final class AlarmContract {
             String alarmId = intent == null ? null : intent.getStringExtra(EXTRA_ALARM_ID);
             String scheduleId = intent == null ? null : intent.getStringExtra(EXTRA_SCHEDULE_ID);
             String title = intent == null ? null : intent.getStringExtra(EXTRA_TITLE);
+            String speechText = intent == null ? null : intent.getStringExtra(EXTRA_SPEECH_TEXT);
             // 缺省按老行为处理：兼容没有带这几个 extra 的旧闹钟/测试 Intent，
             // 保留改动前"全响铃"（震动 + 循环语音 + 全屏）的默认行为。
             boolean vibrate = intent == null || intent.getBooleanExtra(EXTRA_VIBRATE, true);
@@ -131,9 +132,8 @@ final class AlarmContract {
             if (title == null || title.isEmpty()) {
                 title = "日程提醒";
             }
-            String speechText = intent == null ? null : intent.getStringExtra(EXTRA_SPEECH_TEXT);
             return new ExtractedExtras(
-                    alarmId, scheduleId, title, requestCode, vibrate, soundTier, fullScreen, speechText
+                    alarmId, scheduleId, title, speechText, requestCode, vibrate, soundTier, fullScreen
             );
         }
     }

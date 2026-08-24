@@ -44,16 +44,65 @@ export function resolveStrengthDeliveryPlan(strength: ReminderStrength): Strengt
   }
 }
 
+const FALLBACK_TITLE = '未命名日程';
+const MAX_SPOKEN_TITLE_LENGTH = 80;
+
 /**
- * 高强度提醒交给设备 TTS 念的文案：提醒前缀 + 标题 + 位置 + 收尾（标题是用户原话、
- * 通常已含时间，不再叠结构化开始时间）。非 high 或标题为空返回空串，原生按
- * "无文案"回退打包铃。
+ * 高强度提醒交给设备 TTS 念的文案：标题 + 播报时钟时间。非 high 或标题为空返回空串，
+ * 原生按"无文案"回退打包铃。
  */
 export function composeReminderSpeech(schedule: LocalReminderSchedule): string {
   if (schedule.reminder?.reminder_strength !== 'high') return '';
-  const title = schedule.title?.trim();
+  const title = normalizeSpokenTitle(schedule.title);
   if (!title) return '';
-  const location = schedule.location_name?.trim();
-  const body = location ? `${title}，地点在${location}` : title;
-  return `提醒你，${body}，别忘了`;
+  const scheduledTime = formatSpokenScheduleTime(
+    schedule.start_time,
+    schedule.timezone,
+    schedule.is_all_day,
+  );
+  if (scheduledTime == null) {
+    return `${title}，时间到了，请及时处理。`;
+  }
+  if (schedule.is_all_day) {
+    return `${scheduledTime}，今天任务是${title}。`;
+  }
+  return `${title}，时间到了。现在已经${scheduledTime}了。`;
+}
+
+function normalizeSpokenTitle(value: string): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return (normalized || FALLBACK_TITLE).slice(0, MAX_SPOKEN_TITLE_LENGTH);
+}
+
+function formatSpokenScheduleTime(
+  iso: string | null,
+  timezone: string,
+  isAllDay: boolean,
+): string | null {
+  if (iso == null) return null;
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return null;
+
+  try {
+    const formatter = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      weekday: 'long',
+      hour: isAllDay ? undefined : '2-digit',
+      minute: isAllDay ? undefined : '2-digit',
+      hourCycle: 'h23',
+    });
+    const parts = formatter.formatToParts(date);
+    const value = (type: string): string => parts.find((part) => part.type === type)?.value ?? '';
+    const dateText = `${value('month')}月${value('day')}日`;
+    if (isAllDay) return dateText;
+
+    const hour = value('hour');
+    const minute = value('minute');
+    return minute === '00' ? `${hour}点` : `${hour}点${minute}分`;
+  } catch {
+    return null;
+  }
 }

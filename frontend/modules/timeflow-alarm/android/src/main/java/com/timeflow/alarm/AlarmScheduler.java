@@ -29,11 +29,11 @@ public final class AlarmScheduler {
         public final long triggerAtMillis;
         public final int requestCode;
         public final String title;
+        public final String speechText;
         public final boolean legacy;
         public final boolean vibrate;
         public final String soundTier;
         public final boolean fullScreen;
-        public final String speechText;
 
         AlarmRecord(
                 String alarmId,
@@ -41,23 +41,23 @@ public final class AlarmScheduler {
                 long triggerAtMillis,
                 int requestCode,
                 String title,
+                String speechText,
                 boolean legacy,
                 boolean vibrate,
                 String soundTier,
-                boolean fullScreen,
-                String speechText
+                boolean fullScreen
         ) {
             this.alarmId = alarmId;
             this.scheduleId = scheduleId == null ? "" : scheduleId;
             this.triggerAtMillis = triggerAtMillis;
             this.requestCode = requestCode;
             this.title = title;
+            this.speechText = speechText == null ? "" : speechText;
             this.legacy = legacy;
             this.vibrate = vibrate;
             this.soundTier = soundTier == null || soundTier.isEmpty()
                     ? AlarmContract.SOUND_TIER_FULL : soundTier;
             this.fullScreen = fullScreen;
-            this.speechText = speechText == null ? "" : speechText;
         }
     }
 
@@ -97,11 +97,11 @@ public final class AlarmScheduler {
                 triggerAtMillis,
                 nextRequestCode(alarms),
                 title == null ? "" : title,
+                speechText == null ? "" : speechText,
                 false,
                 vibrate,
                 soundTier,
-                fullScreen,
-                speechText == null ? "" : speechText
+                fullScreen
         );
 
         rearm(context, alarmManager, record);
@@ -177,6 +177,7 @@ public final class AlarmScheduler {
                 .putExtra(AlarmContract.EXTRA_ALARM_ID, record.alarmId)
                 .putExtra(AlarmContract.EXTRA_SCHEDULE_ID, record.scheduleId)
                 .putExtra(AlarmContract.EXTRA_TITLE, record.title)
+                .putExtra(AlarmContract.EXTRA_SPEECH_TEXT, record.speechText)
                 .putExtra(AlarmContract.EXTRA_REQUEST_CODE, record.requestCode)
                 .putExtra(AlarmContract.EXTRA_VIBRATE, record.vibrate)
                 .putExtra(AlarmContract.EXTRA_SOUND_TIER, record.soundTier)
@@ -270,11 +271,11 @@ public final class AlarmScheduler {
                         triggerAt,
                         requestCode,
                         object.optString("title", ""),
+                        object.optString("speech_text", ""),
                         legacy,
                         object.optBoolean("vibrate", true),
                         object.optString("sound_tier", AlarmContract.SOUND_TIER_FULL),
-                        object.optBoolean("full_screen", true),
-                        object.optString("speech_text", "")
+                        object.optBoolean("full_screen", true)
                 ));
             }
         } catch (JSONException ignored) {
@@ -371,6 +372,7 @@ public final class AlarmScheduler {
         object.put("trigger_at", alarm.triggerAtMillis);
         object.put("request_code", alarm.requestCode);
         object.put("title", alarm.title);
+        object.put("speech_text", alarm.speechText);
         object.put("legacy", alarm.legacy);
         object.put("vibrate", alarm.vibrate);
         object.put("sound_tier", alarm.soundTier);
@@ -390,6 +392,7 @@ public final class AlarmScheduler {
                 .putExtra(AlarmContract.EXTRA_SCHEDULE_ID, record.scheduleId)
                 .putExtra(AlarmContract.EXTRA_REQUEST_CODE, record.requestCode)
                 .putExtra(AlarmContract.EXTRA_TITLE, record.title)
+                .putExtra(AlarmContract.EXTRA_SPEECH_TEXT, record.speechText)
                 .putExtra(AlarmContract.EXTRA_VIBRATE, record.vibrate)
                 .putExtra(AlarmContract.EXTRA_SOUND_TIER, record.soundTier)
                 .putExtra(AlarmContract.EXTRA_FULL_SCREEN, record.fullScreen)
