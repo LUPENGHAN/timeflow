@@ -22,7 +22,6 @@ import android.os.VibrationEffect;
 import android.os.Vibrator;
 import android.os.VibratorManager;
 import android.provider.Settings;
-import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
 import android.view.Gravity;
@@ -34,7 +33,6 @@ import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.util.ArrayDeque;
 import java.util.HashSet;
-import java.util.Locale;
 import java.util.Set;
 
 public final class AlarmSoundService extends Service {
@@ -47,8 +45,6 @@ public final class AlarmSoundService extends Service {
 
     private MediaPlayer mediaPlayer;
     private Ringtone pingRingtone;
-    private TextToSpeech textToSpeech;
-    private boolean textToSpeechReady;
     private boolean destroyed;
     private File bundledSpeechFile;
     private WindowManager overlayWindowManager;
@@ -155,13 +151,13 @@ public final class AlarmSoundService extends Service {
         fullScreenEnabled = extras.fullScreen;
         speechText = extras.speechText;
         // 诊断用：这条闹钟真正展示的这一刻，soundTier/speechText/TTS 引擎状态到底是
-        // 什么——如果 wantsSpeech()=false 或 textToSpeechReady=false，就是这两个
-        // 原因之一让它退回了打包铃。定位问题排查完可以删。
+        // 什么——如果 wantsSpeech()=false 或引擎没就绪，就是这两个原因之一让它
+        // 退回了打包铃。定位问题排查完可以删。
         Log.i(TAG, "presentAlarm speech diagnostics alarmId=" + alarmId
                 + " soundTier=" + soundTier
                 + " speechText=" + speechText
                 + " wantsSpeech=" + wantsSpeech()
-                + " textToSpeechReady=" + textToSpeechReady);
+                + " ttsReady=" + AlarmTtsEngine.isReady());
 
         createNotificationChannel();
         Notification notification = buildNotification(alarmId, alarmTitle, fullScreenEnabled);
@@ -196,12 +192,16 @@ public final class AlarmSoundService extends Service {
                 showAlarmOverlay(alarmTitle);
             }
             if (AlarmContract.SOUND_TIER_FULL.equals(soundTier) && mediaPlayer == null) {
-                if (wantsSpeech() && textToSpeechReady) {
+                if (wantsSpeech() && AlarmTtsEngine.isReady()) {
                     speakCurrent();
                 } else {
-                    // TTS 引擎未就绪时先响打包铃保底；onInit 成功后 maybeSwitchToSpeech()
-                    // 会停掉打包铃、无缝切到 TTS。
+                    // 引擎是 AlarmModule 构造时就抢先绑定的全局单例，真响铃这一刻通常早就
+                    // 绑定好了；万一还没好（比如冷启动竞态），先响打包铃保底，
+                    // notifyWhenReady() 排一个回调，绑定成功那一刻无缝切到 TTS。
                     startBundledSpeech();
+                    if (wantsSpeech()) {
+                        AlarmTtsEngine.notifyWhenReady(this::maybeSwitchToSpeech);
+                    }
                 }
             } else if (AlarmContract.SOUND_TIER_PING.equals(soundTier)) {
                 startPing();
@@ -240,7 +240,10 @@ public final class AlarmSoundService extends Service {
         playbackHandler.removeCallbacksAndMessages(null);
         removeAlarmOverlay();
         releaseMediaPlayer();
-        releaseTextToSpeech();
+        // 只停这个 Service 实例正在念的这一句、摘掉它挂上去的监听器——引擎是全局单例，
+        // 不在这里 shutdown()：下一条闹钟（甚至冷启动重新拉起这个 Service）还要复用。
+        AlarmTtsEngine.stop();
+        AlarmTtsEngine.setUtteranceListener(null);
         stopVibration();
         stopPing();
         deleteCachedSpeechFile();
@@ -553,70 +556,13 @@ public final class AlarmSoundService extends Service {
     }
 
     /**
-     * 设备 TTS 是 best-effort：初始化失败就标记不可用，走打包铃，绝不重试到崩。
-     * 引擎异步初始化，onInit 成功后还有可能赶上"正在播打包铃、等着切 TTS"的窗口。
+     * 设备 TTS 是 best-effort：不可用就走打包铃，绝不重试到崩。引擎本身是
+     * AlarmTtsEngine 持有的全局单例、在 AlarmModule 构造时就已经抢先绑定过
+     * （见该类顶部注释）——这里只是兜底再确认一次已经启动过初始化，真正的
+     * 绑定/初始化逻辑不在这个 Service 里。
      */
     private void initTextToSpeech() {
-        if (textToSpeech != null) {
-            return;
-        }
-        try {
-            textToSpeech = new TextToSpeech(this, status -> {
-                if (status != TextToSpeech.SUCCESS) {
-                    Log.w(TAG, "TextToSpeech init failed status=" + status);
-                    textToSpeechReady = false;
-                    AlarmNativeBridge.recordTtsDiagnostics(
-                            this, false, status, "init_failed", "alarm");
-                    return;
-                }
-                Locale locale = Locale.getDefault();
-                int availability = textToSpeech.isLanguageAvailable(locale);
-                // 诊断用：这个 availability 值就是"没听到 TTS"最常见的原因——LANG_MISSING_DATA
-                // /LANG_NOT_SUPPORTED 说明设备没装这个语言的语音包，会永久回退打包铃，
-                // 且这之前完全没有日志能证实。定位问题排查完可以删。
-                Log.i(TAG, "TextToSpeech onInit locale=" + locale + " availability=" + availability);
-                if (availability == TextToSpeech.LANG_MISSING_DATA
-                        || availability == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    Log.w(TAG, "TextToSpeech language unavailable locale=" + locale);
-                    textToSpeechReady = false;
-                    AlarmNativeBridge.recordTtsDiagnostics(
-                            this, false, availability, "language_unavailable:" + locale, "alarm");
-                    return;
-                }
-                textToSpeech.setLanguage(locale);
-                textToSpeech.setAudioAttributes(new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build());
-                textToSpeech.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                    @Override
-                    public void onStart(String utteranceId) {
-                        // 无需处理。
-                    }
-
-                    @Override
-                    public void onDone(String utteranceId) {
-                        playbackHandler.postDelayed(replayTts, SPEECH_REPEAT_DELAY_MILLIS);
-                    }
-
-                    @Override
-                    public void onError(String utteranceId) {
-                        onSpeechError();
-                    }
-                });
-                textToSpeechReady = true;
-                Log.i(TAG, "TextToSpeech ready");
-                AlarmNativeBridge.recordTtsDiagnostics(
-                        this, true, TextToSpeech.SUCCESS, "ready", "alarm");
-                maybeSwitchToSpeech();
-            });
-        } catch (RuntimeException exception) {
-            Log.w(TAG, "TextToSpeech unavailable", exception);
-            AlarmNativeBridge.recordTtsDiagnostics(
-                    this, false, -1, "exception:" + exception.getClass().getSimpleName(), "alarm");
-            textToSpeech = null;
-            textToSpeechReady = false;
-        }
+        AlarmTtsEngine.ensureInitialized(this);
     }
 
     /** 当前这条是否该念 TTS：high 档位且有非空文案。 */
@@ -625,18 +571,35 @@ public final class AlarmSoundService extends Service {
                 && speechText != null && !speechText.trim().isEmpty();
     }
 
+    private final UtteranceProgressListener utteranceListener = new UtteranceProgressListener() {
+        @Override
+        public void onStart(String utteranceId) {
+            // 无需处理。
+        }
+
+        @Override
+        public void onDone(String utteranceId) {
+            playbackHandler.postDelayed(replayTts, SPEECH_REPEAT_DELAY_MILLIS);
+        }
+
+        @Override
+        public void onError(String utteranceId) {
+            onSpeechError();
+        }
+    };
+
     private void speakCurrent() {
-        if (destroyed || textToSpeech == null || !textToSpeechReady || !wantsSpeech()) {
+        if (destroyed || !AlarmTtsEngine.isReady() || !wantsSpeech()) {
             Log.i(TAG, "speakCurrent bailed destroyed=" + destroyed
-                    + " textToSpeech=" + (textToSpeech != null)
-                    + " textToSpeechReady=" + textToSpeechReady
+                    + " ttsReady=" + AlarmTtsEngine.isReady()
                     + " wantsSpeech=" + wantsSpeech());
             return;
         }
+        AlarmTtsEngine.setUtteranceListener(utteranceListener);
         // speak() 的返回值只代表"这句话有没有成功排进播放队列"，不代表真的念出来了——
         // 但如果连排队都失败（返回 ERROR），后面大概率也不会有 onDone/onError 回调，
         // 之前完全没有日志能看出这一步失败过。定位问题排查完可以删。
-        int result = textToSpeech.speak(speechText, TextToSpeech.QUEUE_FLUSH, null, "reminder-high");
+        int result = AlarmTtsEngine.speak(speechText, "reminder-high");
         Log.i(TAG, "speakCurrent queued text=" + speechText + " result=" + result);
     }
 
@@ -649,9 +612,9 @@ public final class AlarmSoundService extends Service {
 
     /** 引擎就绪后，若这条闹钟还在打包铃保底、且确实该念 TTS，就切过去。 */
     private void maybeSwitchToSpeech() {
-        if (destroyed || !textToSpeechReady || !wantsSpeech()) {
+        if (destroyed || !AlarmTtsEngine.isReady() || !wantsSpeech()) {
             Log.i(TAG, "maybeSwitchToSpeech skipped destroyed=" + destroyed
-                    + " textToSpeechReady=" + textToSpeechReady
+                    + " ttsReady=" + AlarmTtsEngine.isReady()
                     + " wantsSpeech=" + wantsSpeech());
             return;
         }
@@ -673,22 +636,11 @@ public final class AlarmSoundService extends Service {
         });
     }
 
-    /** 停掉当前这条在念的 TTS，但不销毁引擎——换下一条闹钟时复用同一个引擎。 */
+    /** 停掉当前这条在念的 TTS，但不销毁引擎——引擎是全局单例，换下一条闹钟/下次
+     * 冷启动都要复用同一个已经绑定好的实例。 */
     private void stopSpeaking() {
         playbackHandler.removeCallbacks(replayTts);
-        if (textToSpeech != null) {
-            textToSpeech.stop();
-        }
-    }
-
-    private void releaseTextToSpeech() {
-        playbackHandler.removeCallbacks(replayTts);
-        if (textToSpeech != null) {
-            textToSpeech.stop();
-            textToSpeech.shutdown();
-            textToSpeech = null;
-        }
-        textToSpeechReady = false;
+        AlarmTtsEngine.stop();
     }
 
     private void removeFromSavedAlarms() {
