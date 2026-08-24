@@ -136,6 +136,72 @@ public final class AlarmNativeBridge {
         return objects;
     }
 
+    public static final class TtsDiagnostics {
+        public final boolean ready;
+        public final int statusCode;
+        public final String detail;
+        public final String source;
+        public final long checkedAtMillis;
+
+        TtsDiagnostics(
+                boolean ready, int statusCode, String detail, String source, long checkedAtMillis
+        ) {
+            this.ready = ready;
+            this.statusCode = statusCode;
+            this.detail = detail;
+            this.source = source;
+            this.checkedAtMillis = checkedAtMillis;
+        }
+    }
+
+    /**
+     * 每次设备 TTS 引擎初始化/探测出结果（不管成不成功）都落一次盘，覆盖上一条——
+     * 只关心"最近一次"，不像 dispositions 那样需要保留多条历史。source 区分是真的
+     * 闹钟触发时记的（"alarm"，最贴近真实故障场景），还是调试面板手动探测的
+     * （"manual"，跑在前台 App 进程里，跟后台闹钟触发时的进程状态可能不一样，
+     * 仅供参考）。
+     */
+    public static void recordTtsDiagnostics(
+            Context context, boolean ready, int statusCode, String detail, String source
+    ) {
+        try {
+            JSONObject object = new JSONObject();
+            object.put("ready", ready);
+            object.put("status_code", statusCode);
+            object.put("detail", detail == null ? "" : detail);
+            object.put("source", source == null ? "" : source);
+            object.put("checked_at", System.currentTimeMillis());
+            context.getSharedPreferences(AlarmContract.PREFS_NAME, Context.MODE_PRIVATE)
+                    .edit()
+                    .putString(AlarmContract.TTS_DIAGNOSTICS_KEY, object.toString())
+                    .apply();
+        } catch (JSONException ignored) {
+            // 记录失败不影响响铃本身，纯诊断信息尽力而为。
+        }
+    }
+
+    /** 还没记录过任何结果时返回 null（比如 App 装好之后从没真的响过一次闹钟）。 */
+    public static TtsDiagnostics getTtsDiagnostics(Context context) {
+        SharedPreferences preferences =
+                context.getSharedPreferences(AlarmContract.PREFS_NAME, Context.MODE_PRIVATE);
+        String serialized = preferences.getString(AlarmContract.TTS_DIAGNOSTICS_KEY, null);
+        if (serialized == null) {
+            return null;
+        }
+        try {
+            JSONObject object = new JSONObject(serialized);
+            return new TtsDiagnostics(
+                    object.optBoolean("ready", false),
+                    object.optInt("status_code", 0),
+                    object.optString("detail", ""),
+                    object.optString("source", ""),
+                    object.optLong("checked_at", 0L)
+            );
+        } catch (JSONException ignored) {
+            return null;
+        }
+    }
+
     public static void stopRinging(Context context) {
         AlarmSoundService.stop(context);
         RingActivity.finishIfOpen();

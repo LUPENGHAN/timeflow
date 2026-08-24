@@ -36,4 +36,4 @@ export {
   resolveTimeTriggerAt,
 } from './timeWindow';
 export type { StrengthDeliveryPlan } from './strengthDelivery';
-export { resolveStrengthDeliveryPlan } from './strengthDelivery';
+export { composeReminderSpeech, resolveStrengthDeliveryPlan } from './strengthDelivery';

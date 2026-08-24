@@ -1005,7 +1005,12 @@ describe('LocalReminderApplication', () => {
 
       expect(receipt.channels).toEqual(['native_full_screen']);
       expect(presentNow).toHaveBeenCalledWith(
-        expect.objectContaining({ vibrate: true, sound_tier: 'full', full_screen: true }),
+        expect.objectContaining({
+          vibrate: true,
+          sound_tier: 'full',
+          full_screen: true,
+          speech_text: '喝水提醒',
+        }),
       );
       expect(deps.presenter.show).not.toHaveBeenCalled();
       expect(deps.systemNotification.show).not.toHaveBeenCalled();

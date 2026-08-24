@@ -80,6 +80,15 @@ public class AlarmSoundServiceTest {
     }
 
     @Test
+    public void extractedExtras_carriesSpeechText() {
+        Intent intent = new Intent(context, AlarmSoundService.class)
+                .putExtra(AlarmContract.EXTRA_ALARM_ID, "alarm-tts")
+                .putExtra(AlarmContract.EXTRA_SPEECH_TEXT, "开会，在家");
+        AlarmContract.ExtractedExtras extras = AlarmContract.ExtractedExtras.from(context, intent);
+        assertEquals("开会，在家", extras.speechText);
+    }
+
+    @Test
     public void advanceOrStop_stopsSelfWhenQueueEmpty() {
         AlarmSoundService service = Robolectric.buildService(AlarmSoundService.class).create().get();
         service.onStartCommand(alarmIntent("alarm-1", "schedule-1", "唯一的提醒", 100), 0, 1);

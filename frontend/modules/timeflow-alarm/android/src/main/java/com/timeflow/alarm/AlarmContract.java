@@ -17,6 +17,8 @@ final class AlarmContract {
     static final String EXTRA_VIBRATE = "vibrate";
     static final String EXTRA_SOUND_TIER = "sound_tier";
     static final String EXTRA_FULL_SCREEN = "full_screen";
+    /** 高强度时 JS 传的设备 TTS 文案；空/缺省则原生回退打包铃。 */
+    static final String EXTRA_SPEECH_TEXT = "speech_text";
     /** 声音档位取值：不出声 / 一次性短提示音 / 循环语音直到用户处理。 */
     static final String SOUND_TIER_NONE = "none";
     static final String SOUND_TIER_PING = "ping";
@@ -31,6 +33,8 @@ final class AlarmContract {
     static final String PREFS_NAME = "timeflow_alarms";
     static final String ALARMS_KEY = "pending_alarms";
     static final String DISPOSITIONS_KEY = "native_dispositions";
+    /** 最近一次设备 TTS 引擎初始化/探测结果——JS 端调试面板读这个，不用等真的响一次闹钟。 */
+    static final String TTS_DIAGNOSTICS_KEY = "tts_diagnostics";
     static final String ALARM_URI_SCHEME = "timeflow-alarm";
     /**
      * 自启动/后台弹出界面没有标准 API 能查真实授权状态，这三个 key 只记录
@@ -82,6 +86,7 @@ final class AlarmContract {
         final boolean vibrate;
         final String soundTier;
         final boolean fullScreen;
+        final String speechText;
 
         private ExtractedExtras(
                 String alarmId,
@@ -90,7 +95,8 @@ final class AlarmContract {
                 int requestCode,
                 boolean vibrate,
                 String soundTier,
-                boolean fullScreen
+                boolean fullScreen,
+                String speechText
         ) {
             this.alarmId = alarmId;
             this.scheduleId = scheduleId;
@@ -99,6 +105,7 @@ final class AlarmContract {
             this.vibrate = vibrate;
             this.soundTier = soundTier;
             this.fullScreen = fullScreen;
+            this.speechText = speechText;
         }
 
         static ExtractedExtras from(Context context, Intent intent) {
@@ -124,8 +131,9 @@ final class AlarmContract {
             if (title == null || title.isEmpty()) {
                 title = "日程提醒";
             }
+            String speechText = intent == null ? null : intent.getStringExtra(EXTRA_SPEECH_TEXT);
             return new ExtractedExtras(
-                    alarmId, scheduleId, title, requestCode, vibrate, soundTier, fullScreen
+                    alarmId, scheduleId, title, requestCode, vibrate, soundTier, fullScreen, speechText
             );
         }
     }

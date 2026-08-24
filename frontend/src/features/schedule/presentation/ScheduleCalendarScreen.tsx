@@ -17,6 +17,7 @@ import type { ScheduleCalendarReadService, ScheduleOccurrenceView } from '../app
 import { LocationScheduleDetailSheet } from './LocationScheduleDetailSheet';
 import { LocationScheduleRow } from './LocationScheduleRow';
 import { GeofenceDiagnosticsPanel } from './GeofenceDiagnosticsPanel';
+import { TtsDiagnosticsPanel } from './TtsDiagnosticsPanel';
 import { MonthCalendar } from './MonthCalendar';
 import { ScheduleOccurrenceDetailSheet } from './ScheduleOccurrenceDetailSheet';
 import { ScheduleOccurrenceRow } from './ScheduleOccurrenceRow';
@@ -209,6 +210,7 @@ export function ScheduleCalendarScreen({
               {__DEV__ && process.env.NODE_ENV !== 'test' ? (
                 <GeofenceDiagnosticsPanel schedules={calendar.locationSchedules} />
               ) : null}
+              {__DEV__ && process.env.NODE_ENV !== 'test' ? <TtsDiagnosticsPanel /> : null}
             </View>
           ) : null}
         </View>

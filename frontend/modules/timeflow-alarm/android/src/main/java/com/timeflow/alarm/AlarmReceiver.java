@@ -47,6 +47,10 @@ public final class AlarmReceiver extends BroadcastReceiver {
                 .putExtra(
                         AlarmContract.EXTRA_FULL_SCREEN,
                         intent.getBooleanExtra(AlarmContract.EXTRA_FULL_SCREEN, true)
+                )
+                .putExtra(
+                        AlarmContract.EXTRA_SPEECH_TEXT,
+                        intent.getStringExtra(AlarmContract.EXTRA_SPEECH_TEXT)
                 );
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
