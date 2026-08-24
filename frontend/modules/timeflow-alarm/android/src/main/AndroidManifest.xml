@@ -16,7 +16,7 @@
        https://developer.android.com/reference/android/speech/tts/TextToSpeech.Engine#INTENT_ACTION_TTS_SERVICE -->
   <queries>
     <intent>
-      <action android:name="android.speech.tts.TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE"/>
+      <action android:name="android.intent.action.TTS_SERVICE"/>
     </intent>
   </queries>
 
